@@ -130,16 +130,20 @@ model OnboardingLink {
 // records made from it are the Account (Part 1) and the Ticket with its
 // requests (Part 2).
 model OnboardingSubmission {
-  id          String         @id @default(cuid())
-  linkId      String         @unique @map("link_id")
-  link        OnboardingLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
-  customerId  String         @map("customer_id")
-  customer    Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  accountId   String?        @unique @map("account_id")
-  account     Account?       @relation(fields: [accountId], references: [id], onDelete: SetNull)
-  part1       Json           @map("part_1")
-  part2       Json           @map("part_2")
-  submittedAt DateTime       @default(now()) @map("submitted_at")
+  id               String         @id @default(cuid())
+  linkId           String         @unique @map("link_id")
+  link             OnboardingLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  customerId       String         @map("customer_id")
+  customer         Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  accountId        String?        @unique @map("account_id")
+  account          Account?       @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  part1            Json           @map("part_1")
+  part2            Json           @map("part_2")
+  // Part 3 (VA personality preference) is optional and can come later on
+  // the same link; null until the customer fills it in.
+  part3            Json?          @map("part_3")
+  part3SubmittedAt DateTime?      @map("part_3_submitted_at")
+  submittedAt      DateTime       @default(now()) @map("submitted_at")
 
   ticket Ticket?
 
@@ -172,6 +176,9 @@ enum PaymentMethod {
   PAYONEER
   WISE
   CREDIT_CARD
+  ACH_TRANSFER
+  SWIFT_TRANSFER
+  OTHER
 
   @@schema("vaa_sys")
 }
@@ -194,6 +201,16 @@ model Account {
   invoiceContactEmail  String               @map("invoice_contact_email")
   paymentMethod        PaymentMethod        @map("payment_method")
   billingCountry       String?              @map("billing_country")
+  paymentMethodOther   String?              @map("payment_method_other")
+  hasPayoneerOrWise    Boolean?             @map("has_payoneer_or_wise")
+  invoiceContactRole   String?              @map("invoice_contact_role")
+  businessAddress      String?              @map("business_address")
+  // The platforms the VAs will work on, for the whole account.
+  platforms            String[]             @default([])
+  platformOther        String?              @map("platform_other")
+  fulfillmentType      String?              @map("fulfillment_type")
+  sellerType           String?              @map("seller_type")
+  otherInfo            String?              @map("other_info")
   createdAt            DateTime             @default(now()) @map("created_at")
   updatedAt            DateTime             @updatedAt @map("updated_at")
 
@@ -241,11 +258,13 @@ enum RequestGroup {
 
 // Weekly flexible: a number of hours a week, any time. Daily flexible: hours
 // a day, any time. Daily fixed: set start and end times (Philippine time),
-// which can fall in the night-differential window.
+// which can fall in the night-differential window. Project: a total number
+// of hours.
 enum ScheduleType {
   WEEKLY_FLEXIBLE
   DAILY_FLEXIBLE
   DAILY_FIXED
+  PROJECT
 
   @@schema("vaa_sys")
 }
@@ -278,7 +297,8 @@ model TicketRequest {
   ticketId              String       @map("ticket_id")
   ticket                Ticket       @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   lineNo                Int          @map("line_no")
-  platform              String
+  // Older requests only; the platform now lives on the account.
+  platform              String?
   service               String
   numberOfVas           Int          @map("number_of_vas")
   scheduleType          ScheduleType @map("schedule_type")
@@ -288,6 +308,9 @@ model TicketRequest {
   endTimePht            String?      @map("end_time_pht")
   workDays              String[]     @map("work_days")
   nightDifferential     Boolean      @default(false) @map("night_differential")
+  projectHours          Decimal?     @map("project_hours") @db.Decimal(6, 2)
+  // Free text, e.g. "1H Sat or Sun". additionalHoursPerDay is older requests only.
+  additionalHours       String?      @map("additional_hours")
   additionalHoursPerDay Decimal?     @map("additional_hours_per_day") @db.Decimal(4, 2)
   targetStartDate       DateTime     @map("target_start_date") @db.Date
   tasks                 String

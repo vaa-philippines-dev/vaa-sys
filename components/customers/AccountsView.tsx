@@ -1,11 +1,15 @@
 import { Moon, Star } from 'lucide-react'
 import { RequestGroupSelect } from '@/components/customers/RequestGroupSelect'
+import { CopyButton } from '@/components/leads/OnboardingLinkPanel'
 import { manilaDate, manilaDateTime } from '@/lib/customer-fields'
+import { onboardingUrl } from '@/lib/onboarding'
 import {
+  PART3_QUESTIONS,
   PAYMENT_LABELS,
   REQUEST_GROUP_LABELS,
   SCHEDULE_LABELS,
   TIME_ZONE_LABELS,
+  part3AnswerText,
   subTicketCode,
   ticketCode,
 } from '@/lib/onboarding-fields'
@@ -33,12 +37,53 @@ const hours = (v: unknown) => (v == null ? null : Number(v))
 
 function schedule(r: Request) {
   if (r.scheduleType === 'WEEKLY_FLEXIBLE') return `${hours(r.hoursPerWeek)} h a week, any time`
+  if (r.scheduleType === 'PROJECT') return `${hours(r.projectHours)} h in total`
   const days = r.workDays.join(', ')
   if (r.scheduleType === 'DAILY_FLEXIBLE') return `${hours(r.hoursPerDay)} h a day, any time · ${days}`
   return `${r.startTimePht}–${r.endTimePht} PH time (${hours(r.hoursPerDay)} h) · ${days}`
 }
 
-// The customer's accounts (Part 1 of the form) and their tickets (Part 2).
+// Part 3 of the onboarding form: the answers, or the link to finish it.
+function Personality({ submission }: { submission: NonNullable<Account['submission']> }) {
+  if (!submission.part3SubmittedAt) {
+    const open = !submission.link.revokedAt
+    return (
+      <div className="space-y-2 text-sm">
+        <p className="text-muted-foreground">Not filled in yet. The customer chose to complete it later{open ? ' on the same onboarding link:' : '.'}</p>
+        {open && (
+          <div className="flex items-center gap-2">
+            <input
+              readOnly
+              value={onboardingUrl(submission.link.token)}
+              aria-label="Onboarding link for Part 3"
+              className="h-8 min-w-0 flex-1 rounded-lg border bg-muted/40 px-2.5 font-mono text-xs"
+            />
+            <CopyButton text={onboardingUrl(submission.link.token)} label="Copy link" />
+          </div>
+        )}
+      </div>
+    )
+  }
+  const answers = (submission.part3 ?? {}) as Record<string, unknown>
+  const known = new Set(PART3_QUESTIONS.map((q) => q.id))
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">Filled in {submission.part3SubmittedAt.toLocaleString('en-PH', manilaDateTime)}</p>
+      <Rows
+        items={[
+          ...PART3_QUESTIONS.map((q): [string, React.ReactNode] => [q.label, part3AnswerText(answers[q.id]) || null]),
+          // Answers to questions since removed from the form are still shown.
+          ...Object.keys(answers)
+            .filter((k) => !known.has(k))
+            .map((k): [string, React.ReactNode] => [k, part3AnswerText(answers[k])]),
+        ]}
+      />
+    </div>
+  )
+}
+
+// The customer's accounts (Part 1 of the form), their tickets (Part 2) and
+// the VA personality preference (Part 3).
 export function AccountsView({ accounts, canSetGroup }: { accounts: Account[]; canSetGroup: boolean }) {
   return (
     <div className="space-y-6">
@@ -55,18 +100,27 @@ export function AccountsView({ accounts, canSetGroup }: { accounts: Account[]; c
               {sent && <p className="text-xs text-muted-foreground">From the onboarding form, {sent.toLocaleString('en-PH', manilaDateTime)}</p>}
             </header>
 
-            <div className="grid gap-5 md:grid-cols-2">
+            <div className="grid gap-5 xl:grid-cols-2">
               <div className="space-y-2">
                 <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Company and billing</h4>
                 <Rows
                   items={[
                     ['Company', a.companyName],
-                    ['Name on invoices', a.dbaName || a.companyName],
+                    ['DBA name', a.dbaName],
+                    ['Business address', a.businessAddress ? <span key="addr" className="whitespace-pre-wrap">{a.businessAddress}</span> : null],
                     ['Website', a.website],
                     ['Time zone', a.timeZone ? TIME_ZONE_LABELS[a.timeZone] ?? a.timeZone : null],
                     ['Lives in', primary?.region],
-                    ['Invoices to', `${a.invoiceContactName ?? ''} (${a.invoiceContactEmail})`],
-                    ['Pays by', `${PAYMENT_LABELS[a.paymentMethod]}${a.billingCountry ? ` from ${a.billingCountry}` : ''}`],
+                    ['Platforms', (a.platforms ?? []).map((p) => (p === 'Other' && a.platformOther ? `Other: ${a.platformOther}` : p)).join(', ')],
+                    ['FBA or FBM', a.fulfillmentType],
+                    ['Seller type', a.sellerType],
+                    ['Invoices to', `${a.invoiceContactName ?? ''}${a.invoiceContactRole ? `, ${a.invoiceContactRole}` : ''} (${a.invoiceContactEmail})`],
+                    [
+                      'Pays by',
+                      `${a.paymentMethod === 'OTHER' && a.paymentMethodOther ? `Other: ${a.paymentMethodOther}` : PAYMENT_LABELS[a.paymentMethod]}${a.billingCountry ? ` from ${a.billingCountry}` : ''}`,
+                    ],
+                    ['Payoneer or Wise', a.hasPayoneerOrWise == null ? null : a.hasPayoneerOrWise ? 'Has an active account' : 'No active account'],
+                    ['Other information', a.otherInfo ? <span key="info" className="whitespace-pre-wrap">{a.otherInfo}</span> : null],
                   ]}
                 />
               </div>
@@ -107,7 +161,7 @@ export function AccountsView({ accounts, canSetGroup }: { accounts: Account[]; c
                         <div>
                           <p className="font-mono text-xs text-muted-foreground">{subTicketCode(t.ticketNumber, r.lineNo)}</p>
                           <p className="text-sm font-medium">
-                            {r.numberOfVas} × {r.service} VA on {r.platform}
+                            {r.numberOfVas} × {r.service} VA{r.platform && ` on ${r.platform}`}
                           </p>
                         </div>
                         {canSetGroup ? (
@@ -127,9 +181,9 @@ export function AccountsView({ accounts, canSetGroup }: { accounts: Account[]; c
                               </span>
                             ) : null,
                           ],
-                          ['Additional hours', r.additionalHoursPerDay != null ? `${hours(r.additionalHoursPerDay)} h a day` : null],
+                          ['Additional hours', r.additionalHours ?? (r.additionalHoursPerDay != null ? `${hours(r.additionalHoursPerDay)} h a day` : null)],
                           ['Target start', r.targetStartDate.toLocaleDateString('en-PH', { ...manilaDate, timeZone: 'UTC' })],
-                          ['First tasks', <span key="t" className="whitespace-pre-wrap">{r.tasks}</span>],
+                          ['Tasks', <span key="t" className="whitespace-pre-wrap">{r.tasks}</span>],
                           ['Tools', r.tools],
                           ['Group set by', r.requestGroupSetBy],
                         ]}
@@ -139,6 +193,13 @@ export function AccountsView({ accounts, canSetGroup }: { accounts: Account[]; c
                 </ul>
               </div>
             ))}
+
+            {a.submission && (
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">VA personality preference</h4>
+                <Personality submission={a.submission} />
+              </div>
+            )}
           </article>
         )
       })}

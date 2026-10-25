@@ -16,7 +16,7 @@ type LinkInfo = {
   email: { subject: string; body: string }
 }
 
-function CopyButton({ text, label }: { text: string; label: string }) {
+export function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
     try {

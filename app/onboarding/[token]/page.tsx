@@ -29,8 +29,15 @@ export default async function OnboardingPage({ params }: { params: Promise<{ tok
       </header>
 
       <main className="mx-auto max-w-3xl px-4 py-8">
-        {state === 'OPEN' && link ? (
-          <OnboardingForm token={token} customerName={link.customer.name} customerCode={link.customer.customerCode} prefillEmail={link.customer.email} services={services} />
+        {(state === 'OPEN' || state === 'PART3_OPEN') && link ? (
+          <OnboardingForm
+            token={token}
+            customerName={link.customer.name}
+            customerCode={link.customer.customerCode}
+            prefillEmail={link.customer.email}
+            services={services}
+            part3Only={state === 'PART3_OPEN'}
+          />
         ) : (
           <div className="mx-auto max-w-md rounded-xl border bg-card p-8 text-center">
             <h1 className="text-lg font-semibold">

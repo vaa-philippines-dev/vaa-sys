@@ -93,7 +93,7 @@ export async function getCustomer(id: string) {
         orderBy: { createdAt: 'asc' },
         include: {
           contacts: { orderBy: { kind: 'asc' } },
-          submission: { select: { submittedAt: true } },
+          submission: { select: { submittedAt: true, part3: true, part3SubmittedAt: true, link: { select: { token: true, revokedAt: true } } } },
           tickets: { orderBy: { ticketNumber: 'asc' }, include: { requests: { orderBy: { lineNo: 'asc' } } } },
         },
       },

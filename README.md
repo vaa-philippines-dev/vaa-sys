@@ -4,9 +4,18 @@ One app with two areas on one database. It replaces the legacy Apps Script CMS s
 
 - **Customer Management** (`/customers`) is for Customer Specialists and their manager: every customer, their status and its history.
 - **Lead Management** (`/leads`) is for the Lead Manager (Miss Mary): adding new customers and sending them their onboarding link.
-- **Onboarding form** (`/onboarding/<token>`) is the public form a customer opens from that link. It has two parts:
-  - **Part 1, profile:** primary and secondary contacts with roles, who the main (focal) contact is, the company and the name on invoices (DBA), who gets invoices, and the payment method. NIS bank transfer is offered to Israel only.
-  - **Part 2, VA requests:** platform, service, how many VAs, the schedule, start date, first tasks and tools. Schedules are weekly flexible, daily flexible, or daily fixed in Philippine time; a daily-fixed shift between 10 PM and 6 AM is flagged for night differential.
+- **Onboarding form** (`/onboarding/<token>`) is the public form a customer opens from that link. It asks the same questions as VAA's Google Form "CUSTOMER ONBOARDING FORM", in three parts:
+  - **Part 1, customer profile:**
+    - primary and secondary contacts with roles, and whether the primary contact is the focal person
+    - company, DBA name, business address, website
+    - the platforms the VAs will work on, FBA or FBM, private label or reseller, and any other information
+    - the invoice contact
+    - payment details: whether they have an active Payoneer or Wise account, and the payment method. Customers in Israel choose from Payoneer, Wise, NIS bank transfer or Other; everyone else from Payoneer, Wise, ACH, SWIFT, credit card or Other.
+  - **Part 2, skill requirements:** one VA service per service type, each with:
+    - service, quantity and target start date
+    - work hour type: daily fixed (Philippine time), daily flexible, weekly flexible, or project hours, at 3 to 9 hours a day and 15 to 45 hours a week. A daily-fixed shift between 10 PM and 6 AM is flagged for night differential.
+    - additional hours, tasks and tools
+  - **Part 3, VA personality preference:** optional. A customer who skips it can complete it later on the same link, even after the link's 14 days, and the lead's page shows it as not filled in yet with the link to copy.
 
 Same stack as `va-management`: Next.js 16, React 19, Tailwind v4, shadcn, Prisma 7 with `@prisma/adapter-pg`, and Supabase Auth with Google.
 
@@ -44,7 +53,8 @@ Everyone signs in with Google and needs an active VAA Workforce account (`public
 2. **Create onboarding link:** this makes a personal link, valid for 14 days. The page shows a ready-to-send email with Copy and "Open in email app" buttons. Making a new link stops the old one from working.
 3. **The customer fills in the form.** Submitting it creates, in one go:
    - the customer's first **account** (`CLT_…`, named after the customer) with its contacts, invoice contact and payment method, from Part 1
-   - a **main ticket** (`TKT-000001`) with one **sub-ticket** per VA request (`TKT-000001-01`), from Part 2
+   - a **main ticket** (`TKT-000001`) with one **sub-ticket** per VA service (`TKT-000001-01`), from Part 2
+   - the Part 3 answers on the submission, if the customer filled them in
 
    Lead Management follows each lead: No link yet → Link sent → Form opened → Form submitted. On the lead's page, Lead Management sets each sub-ticket's **request group** (Regular by default, or Expert or Casual).
 4. **Customer Management** reads the submission and changes the status (Active, Paused, Cancelled, Terminated). Every change is logged with who made it, when, and why. A reason is required for Paused, Cancelled and Terminated.
@@ -61,11 +71,11 @@ The app shares va-management's Supabase Postgres but only owns the **`vaa_sys`**
 | `customers` | customer ID, name, email, status, created by and when |
 | `customer_status_logs` | every status change (from, to, reason, who, when) |
 | `onboarding_links` | link token, expiry, when it was opened, when it was submitted |
-| `onboarding_submissions` | exactly what the customer submitted, kept for reference |
-| `accounts` | account ID, name, company, name on invoices, website, time zone, invoice contact, payment method |
+| `onboarding_submissions` | exactly what the customer submitted, kept for reference, and the Part 3 answers once given |
+| `accounts` | account ID, name, company, DBA name, business address, website, time zone, platforms, FBA/FBM, seller type, invoice contact, payment details |
 | `account_contacts` | primary and secondary contact (name, role, email, WhatsApp, region, focal) |
 | `tickets` | main ticket per account request (`ticket_number` → TKT-000001) |
-| `ticket_requests` | one sub-ticket per VA request: platform, service, schedule and hours, night differential, start date, tasks, tools, request group |
+| `ticket_requests` | one sub-ticket per VA service: service, schedule and hours, night differential, additional hours, start date, tasks, tools, request group. `platform` is only set on requests made before the platforms moved to the account. |
 
 The app reads va-management's data with raw SQL and never modifies it:
 - `public.users` for sign-in
@@ -86,6 +96,7 @@ npm run db:apply -- prisma/sql/<file>.sql
 - `001_client_entry_init.sql`: the retired prototype
 - `002_vaa_sys_init.sql`: dropped the prototype and created `vaa_sys`
 - `003_accounts_tickets.sql`: added accounts, contacts and tickets
+- `004_onboarding_google_form.sql`: added the Google Form's questions and Part 3 (additive only)
 
 ## Setup
 
@@ -108,8 +119,7 @@ Set `NEXT_PUBLIC_SITE_URL` to the deployed address, because onboarding links are
 ## Next phases (from the Oct 21 meeting)
 
 - **Ticket follow-up:** ticket statuses, account managers, and terminations through tickets.
-- **Ian's current Google onboarding form:** match the questions and option lists to it (`lib/onboarding-fields.ts`).
+- **Google Form option lists:** region of residence, FBA/FBM, seller type, and the Part 3 questions in `lib/onboarding-fields.ts` are still drafts until the Google Form's own lists arrive.
 - **Service list:** switch to Workforce's official services and positions once database access is given.
-- **Personality / VA profile questions:** on hold; the team already has a format.
 - **Sending the onboarding email from the app,** for example through Resend, which va-management already uses.
 - **Calculations** (phase 2).
