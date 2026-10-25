@@ -1,0 +1,303 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// Same Supabase database as va-management, but this app only ever owns the
+// `vaa_sys` Postgres schema. Listing it here (and nothing else) keeps every
+// Prisma command scoped to it, so nothing in this project can diff, alter or
+// drop va-management's tables in `public`.
+//
+// The links back to va-management (the signed-in staff member in
+// public.users, the service list in public.departments) are read with raw
+// SQL, never modelled here — a `public` model in this schema would let
+// Prisma try to "fix" va-management's tables.
+datasource db {
+  provider = "postgresql"
+  schemas  = ["vaa_sys"]
+}
+
+// ── Access ───────────────────────────────────────────────────────
+
+// Who may use which part of vaa-sys. va-management's SUPER_ADMIN and
+// SYSTEM_ADMIN accounts are admins without a row here; everyone else needs
+// one (and an active va-management account).
+enum AccessRole {
+  ADMIN
+  CS_MANAGER
+  CUSTOMER_SPECIALIST
+  LEAD_MANAGER
+
+  @@schema("vaa_sys")
+}
+
+model AccessUser {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  role         AccessRole
+  isActive     Boolean    @default(true) @map("is_active")
+  addedByEmail String     @map("added_by_email")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  @@map("access_users")
+  @@schema("vaa_sys")
+}
+
+// ── Customers ────────────────────────────────────────────────────
+
+// Same five statuses as the legacy Apps Script CMS.
+enum CustomerStatus {
+  PENDING
+  ACTIVE
+  PAUSED
+  CANCELLED
+  TERMINATED
+
+  @@schema("vaa_sys")
+}
+
+// A lead is a customer that hasn't finished onboarding yet: Lead Management
+// creates the row (status PENDING) and Customer Management takes it from
+// there. customerCode keeps the legacy CMS format (CUST_ + 12 hex).
+model Customer {
+  id              String         @id @default(cuid())
+  customerCode    String         @unique @map("customer_code")
+  name            String
+  email           String?
+  status          CustomerStatus @default(PENDING)
+  statusChangedAt DateTime       @default(now()) @map("status_changed_at")
+  notes           String?
+  createdById     String?        @map("created_by_id")
+  createdByEmail  String         @map("created_by_email")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  statusLogs      CustomerStatusLog[]
+  onboardingLinks OnboardingLink[]
+  submissions     OnboardingSubmission[]
+  accounts        Account[]
+  tickets         Ticket[]
+
+  @@index([name])
+  @@index([status])
+  @@map("customers")
+  @@schema("vaa_sys")
+}
+
+// Every status change, including the first one (fromStatus null = created).
+model CustomerStatusLog {
+  id             String          @id @default(cuid())
+  customerId     String          @map("customer_id")
+  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  fromStatus     CustomerStatus? @map("from_status")
+  toStatus       CustomerStatus  @map("to_status")
+  reason         String?
+  changedById    String?         @map("changed_by_id")
+  changedByEmail String          @map("changed_by_email")
+  changedAt      DateTime        @default(now()) @map("changed_at")
+
+  @@index([customerId, changedAt])
+  @@map("customer_status_logs")
+  @@schema("vaa_sys")
+}
+
+// ── Onboarding ───────────────────────────────────────────────────
+
+// The prefilled link Lead Management sends to a customer. The token is the
+// only thing that grants access to the public form, so it is random and
+// single-purpose; a new link revokes the customer's older open ones.
+model OnboardingLink {
+  id             String    @id @default(cuid())
+  customerId     String    @map("customer_id")
+  customer       Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  token          String    @unique
+  createdByEmail String    @map("created_by_email")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  expiresAt      DateTime  @map("expires_at")
+  revokedAt      DateTime? @map("revoked_at")
+  openedAt       DateTime? @map("opened_at")
+  submittedAt    DateTime? @map("submitted_at")
+
+  submission OnboardingSubmission?
+
+  @@index([customerId])
+  @@map("onboarding_links")
+  @@schema("vaa_sys")
+}
+
+// Exactly what the customer submitted, kept as-is for reference. The usable
+// records made from it are the Account (Part 1) and the Ticket with its
+// requests (Part 2).
+model OnboardingSubmission {
+  id          String         @id @default(cuid())
+  linkId      String         @unique @map("link_id")
+  link        OnboardingLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  customerId  String         @map("customer_id")
+  customer    Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  accountId   String?        @unique @map("account_id")
+  account     Account?       @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  part1       Json           @map("part_1")
+  part2       Json           @map("part_2")
+  submittedAt DateTime       @default(now()) @map("submitted_at")
+
+  ticket Ticket?
+
+  @@index([customerId])
+  @@map("onboarding_submissions")
+  @@schema("vaa_sys")
+}
+
+// ── Accounts ─────────────────────────────────────────────────────
+
+enum ContactKind {
+  PRIMARY
+  SECONDARY
+
+  @@schema("vaa_sys")
+}
+
+// Who invoices go to: one of the account's contacts, or someone else.
+enum InvoiceContactSource {
+  PRIMARY
+  SECONDARY
+  OTHER
+
+  @@schema("vaa_sys")
+}
+
+// What the customer pays with. NIS bank transfer is offered to Israel only.
+enum PaymentMethod {
+  NIS_BANK_TRANSFER
+  PAYONEER
+  WISE
+  CREDIT_CARD
+
+  @@schema("vaa_sys")
+}
+
+// An account under a customer, made from Part 1 of the onboarding form. The
+// first account is usually named after the customer. accountCode keeps the
+// legacy CMS format (CLT_ + 12 hex), like the CMS "Clients" tab.
+model Account {
+  id                   String               @id @default(cuid())
+  accountCode          String               @unique @map("account_code")
+  customerId           String               @map("customer_id")
+  customer             Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  name                 String
+  companyName          String               @map("company_name")
+  dbaName              String?              @map("dba_name")
+  website              String?
+  timeZone             String?              @map("time_zone")
+  invoiceContactSource InvoiceContactSource @map("invoice_contact_source")
+  invoiceContactName   String?              @map("invoice_contact_name")
+  invoiceContactEmail  String               @map("invoice_contact_email")
+  paymentMethod        PaymentMethod        @map("payment_method")
+  billingCountry       String?              @map("billing_country")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+
+  contacts   AccountContact[]
+  tickets    Ticket[]
+  submission OnboardingSubmission?
+
+  @@index([customerId])
+  @@map("accounts")
+  @@schema("vaa_sys")
+}
+
+// The account's primary and (optional) secondary contact. Exactly one
+// contact per account is the focal person, the one VAA works with day to day.
+model AccountContact {
+  id        String      @id @default(cuid())
+  accountId String      @map("account_id")
+  account   Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  kind      ContactKind
+  firstName String      @map("first_name")
+  lastName  String      @map("last_name")
+  role      String?
+  email     String
+  whatsapp  String?
+  region    String?
+  isFocal   Boolean     @default(false) @map("is_focal")
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+
+  @@unique([accountId, kind])
+  @@map("account_contacts")
+  @@schema("vaa_sys")
+}
+
+// ── Tickets ──────────────────────────────────────────────────────
+
+// Hiring group for a VA request. Regular unless Lead Management changes it.
+enum RequestGroup {
+  REGULAR
+  EXPERT
+  CASUAL
+
+  @@schema("vaa_sys")
+}
+
+// Weekly flexible: a number of hours a week, any time. Daily flexible: hours
+// a day, any time. Daily fixed: set start and end times (Philippine time),
+// which can fall in the night-differential window.
+enum ScheduleType {
+  WEEKLY_FLEXIBLE
+  DAILY_FLEXIBLE
+  DAILY_FIXED
+
+  @@schema("vaa_sys")
+}
+
+// Main ticket: one per account request, shown as TKT-000001. Each VA
+// request in it is a sub-ticket (TicketRequest), shown as TKT-000001-01.
+model Ticket {
+  id             String                @id @default(cuid())
+  ticketNumber   Int                   @unique @default(autoincrement()) @map("ticket_number")
+  customerId     String                @map("customer_id")
+  customer       Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  accountId      String                @map("account_id")
+  account        Account               @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  submissionId   String?               @unique @map("submission_id")
+  submission     OnboardingSubmission? @relation(fields: [submissionId], references: [id], onDelete: SetNull)
+  createdByEmail String                @map("created_by_email")
+  createdAt      DateTime              @default(now()) @map("created_at")
+  updatedAt      DateTime              @updatedAt @map("updated_at")
+
+  requests TicketRequest[]
+
+  @@index([customerId])
+  @@index([accountId])
+  @@map("tickets")
+  @@schema("vaa_sys")
+}
+
+model TicketRequest {
+  id                    String       @id @default(cuid())
+  ticketId              String       @map("ticket_id")
+  ticket                Ticket       @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  lineNo                Int          @map("line_no")
+  platform              String
+  service               String
+  numberOfVas           Int          @map("number_of_vas")
+  scheduleType          ScheduleType @map("schedule_type")
+  hoursPerWeek          Decimal?     @map("hours_per_week") @db.Decimal(5, 2)
+  hoursPerDay           Decimal?     @map("hours_per_day") @db.Decimal(4, 2)
+  startTimePht          String?      @map("start_time_pht")
+  endTimePht            String?      @map("end_time_pht")
+  workDays              String[]     @map("work_days")
+  nightDifferential     Boolean      @default(false) @map("night_differential")
+  additionalHoursPerDay Decimal?     @map("additional_hours_per_day") @db.Decimal(4, 2)
+  targetStartDate       DateTime     @map("target_start_date") @db.Date
+  tasks                 String
+  tools                 String?
+  requestGroup          RequestGroup @default(REGULAR) @map("request_group")
+  requestGroupSetBy     String?      @map("request_group_set_by")
+  createdAt             DateTime     @default(now()) @map("created_at")
+  updatedAt             DateTime     @updatedAt @map("updated_at")
+
+  @@unique([ticketId, lineNo])
+  @@map("ticket_requests")
+  @@schema("vaa_sys")
+}

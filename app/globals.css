@@ -1,0 +1,358 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-montserrat: var(--font-montserrat);
+  --font-mono: var(--font-jetbrains-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-active: var(--sidebar-active);
+  --color-sidebar-active-foreground: var(--sidebar-active-foreground);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-overlay: var(--overlay);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  /* Exact hex values from the approved design concept — a neutral (hueless)
+     ground with sky/gold reserved for accents only. Do not reintroduce a
+     hue tilt into background/card/border tokens; that was the bug last time. */
+  --background: #FAFAFB;
+  --foreground: #23252A;
+  --card: #FFFFFF;
+  --card-foreground: #23252A;
+  --popover: #FFFFFF;
+  --popover-foreground: #23252A;
+  --primary: #1C87B8;
+  --primary-foreground: #FFFFFF;
+  --secondary: #F1F2F4;
+  --secondary-foreground: #23252A;
+  --muted: #F1F2F4;
+  --muted-foreground: #6B6F76;
+  --accent: #F1F2F4;
+  --accent-foreground: #23252A;
+  --destructive: #C0392B;
+  --border: rgba(20, 20, 25, 0.09);
+  --input: rgba(20, 20, 25, 0.12);
+  --ring: #1C87B8;
+  --chart-1: #1C87B8;
+  --chart-2: #6FC6EE;
+  --chart-3: #96690A;
+  --chart-4: #6B6F76;
+  --chart-5: #9B9EA4;
+  --radius: 0.5rem;
+
+  --sidebar: #F1F2F4;
+  --sidebar-foreground: #6B6F76;
+  --sidebar-primary: #1C87B8;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #FFFFFF;
+  --sidebar-accent-foreground: #23252A;
+  --sidebar-border: rgba(20, 20, 25, 0.07);
+  --sidebar-ring: #1C87B8;
+  --sidebar-active: #E2E3E6;
+  --sidebar-active-foreground: #101114;
+
+  --success: #1A8F5A;
+  --success-foreground: #FFFFFF;
+  --warning: #96690A;
+  --warning-foreground: #FFFFFF;
+  --info: #1C87B8;
+  --info-foreground: #FFFFFF;
+  --overlay: rgba(20, 20, 25, 0.45);
+}
+
+.dark {
+  --background: #1B1C20;
+  --foreground: #E4E4E6;
+  --card: #1E1F23;
+  --card-foreground: #E4E4E6;
+  --popover: #1E1F23;
+  --popover-foreground: #E4E4E6;
+  --primary: #6FC6EE;
+  --primary-foreground: #0B0C0E;
+  --secondary: #17181B;
+  --secondary-foreground: #E4E4E6;
+  --muted: #17181B;
+  --muted-foreground: #8E8F94;
+  --accent: #26272C;
+  --accent-foreground: #E4E4E6;
+  --destructive: #E5675A;
+  --border: rgba(255, 255, 255, 0.06);
+  --input: rgba(255, 255, 255, 0.1);
+  --ring: #6FC6EE;
+  --chart-1: #6FC6EE;
+  --chart-2: #1C87B8;
+  --chart-3: #FDBB30;
+  --chart-4: #8E8F94;
+  --chart-5: #616268;
+
+  --sidebar: #17181B;
+  --sidebar-foreground: #8E8F94;
+  --sidebar-primary: #6FC6EE;
+  --sidebar-primary-foreground: #0B0C0E;
+  --sidebar-accent: #1E1F23;
+  --sidebar-accent-foreground: #E4E4E6;
+  --sidebar-border: rgba(255, 255, 255, 0.06);
+  --sidebar-ring: #6FC6EE;
+  --sidebar-active: #2C2D32;
+  --sidebar-active-foreground: #F5F5F6;
+
+  --success: #3FBE86;
+  --success-foreground: #0B0C0E;
+  --warning: #FDBB30;
+  --warning-foreground: #0B0C0E;
+  --info: #6FC6EE;
+  --info-foreground: #0B0C0E;
+  --overlay: rgba(8, 9, 11, 0.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/* Button and link click feedback */
+a[href],
+button,
+[role="button"] {
+  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+}
+a[href]:active:not(.no-animate),
+button:active:not(.no-animate):not([disabled]),
+[role="button"]:active:not(.no-animate) {
+  transform: scale(0.97);
+  opacity: 0.85;
+}
+
+/* Card hover transitions */
+.card-hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.card-hover:hover {
+  background: var(--accent);
+}
+.card-hover:active {
+  transform: scale(0.98);
+}
+
+@utility clickable {
+  @apply transition-all duration-150 cursor-pointer active:scale-[0.97] active:opacity-80;
+}
+
+/* Staggered fade-in for card grids and lists */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in-stagger > * {
+  animation: fade-in-up 0.35s ease-out both;
+}
+.fade-in-stagger > *:nth-child(1) { animation-delay: 0ms; }
+.fade-in-stagger > *:nth-child(2) { animation-delay: 40ms; }
+.fade-in-stagger > *:nth-child(3) { animation-delay: 80ms; }
+.fade-in-stagger > *:nth-child(4) { animation-delay: 120ms; }
+.fade-in-stagger > *:nth-child(5) { animation-delay: 160ms; }
+.fade-in-stagger > *:nth-child(6) { animation-delay: 200ms; }
+.fade-in-stagger > *:nth-child(n+7) { animation-delay: 240ms; }
+
+/* ── Lead Management look ─────────────────────────────────────────
+   The design from the original lead-management-sys ("editorial
+   monochrome": warm cream ground, near-black ink, muted earthy status
+   colours, generous rounding). Scoped to the Lead Management area only:
+   app/(lms)/layout.tsx wraps it in .lms, which re-points the shared
+   shadcn tokens, so the same components take on this look there while
+   the rest of vaa-sys keeps the Workforce palette. */
+.lms {
+  --lms-bg: #f6f7ed;
+  --lms-surface: #ffffff;
+  --lms-surface-2: #f4f4f1;
+  --lms-border: #e6e6dd;
+  --lms-text: #1f1f1f;
+  --lms-muted: #8a8a7e;
+  --lms-ink: #1f1f1f;
+  --lms-ink-contrast: #ffffff;
+  --lms-ink-soft: #eceee2;
+
+  --background: var(--lms-bg);
+  --foreground: var(--lms-text);
+  --card: var(--lms-surface);
+  --card-foreground: var(--lms-text);
+  --popover: var(--lms-surface);
+  --popover-foreground: var(--lms-text);
+  --primary: var(--lms-ink);
+  --primary-foreground: var(--lms-ink-contrast);
+  --secondary: var(--lms-surface-2);
+  --secondary-foreground: var(--lms-text);
+  --muted: var(--lms-surface-2);
+  --muted-foreground: var(--lms-muted);
+  --accent: var(--lms-surface-2);
+  --accent-foreground: var(--lms-text);
+  --border: var(--lms-border);
+  --input: var(--lms-border);
+  --ring: var(--lms-ink);
+  --success: #4c8b5d;
+  --info: #4f7cad;
+  --warning: #c98a3e;
+  --destructive: #b5544a;
+  --radius: 0.75rem;
+
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.dark .lms {
+  --lms-bg: #1a1a16;
+  --lms-surface: #232320;
+  --lms-surface-2: #2a2a25;
+  --lms-border: #38382f;
+  --lms-text: #f4f4ec;
+  --lms-muted: #9c9c90;
+  --lms-ink: #f4f4ec;
+  --lms-ink-contrast: #1a1a16;
+  --lms-ink-soft: #2f2f28;
+
+  --success: #6fae80;
+  --info: #7ca2cf;
+  --warning: #e0a75e;
+  --destructive: #d0837a;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+/* ── Customer Management look ─────────────────────────────────────
+   Sibling of the Lead Management look (same sidebar, rounding and calm
+   ground) with its own identity: a cool mist-green ground, deep VAA teal
+   as the ink, Montserrat for headings and figures, and one colour per
+   customer status. app/(cms)/layout.tsx wraps it in .cms. The status
+   colours are also mapped onto the shared info/success/warning/destructive
+   tokens, so the existing badges pick them up. */
+.cms {
+  --cms-bg: #edf2ef;
+  --cms-surface: #ffffff;
+  --cms-surface-2: #e4ebe7;
+  --cms-border: #d6dfda;
+  --cms-text: #10201c;
+  --cms-muted: #5b6b65;
+  --cms-ink: #0e4a44;
+  --cms-ink-contrast: #f2fbf8;
+  --cms-ink-soft: #d3e7e2;
+
+  --st-pending: #4a6fa5;
+  --st-active: #2c8a57;
+  --st-paused: #b07419;
+  --st-cancelled: #87918d;
+  --st-terminated: #b0473b;
+
+  --background: var(--cms-bg);
+  --foreground: var(--cms-text);
+  --card: var(--cms-surface);
+  --card-foreground: var(--cms-text);
+  --popover: var(--cms-surface);
+  --popover-foreground: var(--cms-text);
+  --primary: var(--cms-ink);
+  --primary-foreground: var(--cms-ink-contrast);
+  --secondary: var(--cms-surface-2);
+  --secondary-foreground: var(--cms-text);
+  --muted: var(--cms-surface-2);
+  --muted-foreground: var(--cms-muted);
+  --accent: var(--cms-surface-2);
+  --accent-foreground: var(--cms-text);
+  --border: var(--cms-border);
+  --input: var(--cms-border);
+  --ring: var(--cms-ink);
+  --info: var(--st-pending);
+  --success: var(--st-active);
+  --warning: var(--st-paused);
+  --destructive: var(--st-terminated);
+  --radius: 0.75rem;
+
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.dark .cms {
+  --cms-bg: #0c1512;
+  --cms-surface: #13201b;
+  --cms-surface-2: #1a2a24;
+  --cms-border: #253831;
+  --cms-text: #e6f0ec;
+  --cms-muted: #8fa39b;
+  --cms-ink: #5fd3be;
+  --cms-ink-contrast: #062019;
+  --cms-ink-soft: #173832;
+
+  --st-pending: #84a6d6;
+  --st-active: #5cc58b;
+  --st-paused: #e0a650;
+  --st-cancelled: #8d9893;
+  --st-terminated: #e07c70;
+}
+
+.cms .font-display {
+  font-family: var(--font-montserrat), var(--font-sans);
+}

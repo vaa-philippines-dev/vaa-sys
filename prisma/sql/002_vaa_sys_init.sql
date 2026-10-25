@@ -1,0 +1,149 @@
+-- vaa-sys: one app, two areas (Customer Management, Lead Management),
+-- in its own `vaa_sys` schema on the shared Supabase database.
+--
+-- Retire the empty Client Entry prototype schema first. Refuses to run if
+-- anyone has saved real rows there since.
+DO $$
+BEGIN
+  IF to_regclass('client_entry.customers') IS NOT NULL THEN
+    IF EXISTS (SELECT 1 FROM client_entry.customers) OR EXISTS (SELECT 1 FROM client_entry.accounts) THEN
+      RAISE EXCEPTION 'client_entry still has rows; not dropping it';
+    END IF;
+  END IF;
+END $$;
+DROP SCHEMA IF EXISTS "client_entry" CASCADE;
+
+-- CreateSchema
+CREATE SCHEMA IF NOT EXISTS "vaa_sys";
+
+-- CreateEnum
+CREATE TYPE "vaa_sys"."AccessRole" AS ENUM ('ADMIN', 'CS_MANAGER', 'CUSTOMER_SPECIALIST', 'LEAD_MANAGER');
+
+-- CreateEnum
+CREATE TYPE "vaa_sys"."CustomerStatus" AS ENUM ('PENDING', 'ACTIVE', 'PAUSED', 'CANCELLED', 'TERMINATED');
+
+-- CreateTable
+CREATE TABLE "vaa_sys"."access_users" (
+    "id" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "role" "vaa_sys"."AccessRole" NOT NULL,
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "added_by_email" TEXT NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "access_users_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "vaa_sys"."customers" (
+    "id" TEXT NOT NULL,
+    "customer_code" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "email" TEXT,
+    "status" "vaa_sys"."CustomerStatus" NOT NULL DEFAULT 'PENDING',
+    "status_changed_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "notes" TEXT,
+    "created_by_id" TEXT,
+    "created_by_email" TEXT NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "customers_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "vaa_sys"."customer_status_logs" (
+    "id" TEXT NOT NULL,
+    "customer_id" TEXT NOT NULL,
+    "from_status" "vaa_sys"."CustomerStatus",
+    "to_status" "vaa_sys"."CustomerStatus" NOT NULL,
+    "reason" TEXT,
+    "changed_by_id" TEXT,
+    "changed_by_email" TEXT NOT NULL,
+    "changed_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "customer_status_logs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "vaa_sys"."onboarding_links" (
+    "id" TEXT NOT NULL,
+    "customer_id" TEXT NOT NULL,
+    "token" TEXT NOT NULL,
+    "created_by_email" TEXT NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "expires_at" TIMESTAMP(3) NOT NULL,
+    "revoked_at" TIMESTAMP(3),
+    "opened_at" TIMESTAMP(3),
+    "submitted_at" TIMESTAMP(3),
+
+    CONSTRAINT "onboarding_links_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "vaa_sys"."onboarding_submissions" (
+    "id" TEXT NOT NULL,
+    "link_id" TEXT NOT NULL,
+    "customer_id" TEXT NOT NULL,
+    "part_1" JSONB NOT NULL,
+    "part_2" JSONB NOT NULL,
+    "submitted_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "onboarding_submissions_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "access_users_email_key" ON "vaa_sys"."access_users"("email");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "customers_customer_code_key" ON "vaa_sys"."customers"("customer_code");
+
+-- CreateIndex
+CREATE INDEX "customers_name_idx" ON "vaa_sys"."customers"("name");
+
+-- CreateIndex
+CREATE INDEX "customers_status_idx" ON "vaa_sys"."customers"("status");
+
+-- CreateIndex
+CREATE INDEX "customer_status_logs_customer_id_changed_at_idx" ON "vaa_sys"."customer_status_logs"("customer_id", "changed_at");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "onboarding_links_token_key" ON "vaa_sys"."onboarding_links"("token");
+
+-- CreateIndex
+CREATE INDEX "onboarding_links_customer_id_idx" ON "vaa_sys"."onboarding_links"("customer_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "onboarding_submissions_link_id_key" ON "vaa_sys"."onboarding_submissions"("link_id");
+
+-- CreateIndex
+CREATE INDEX "onboarding_submissions_customer_id_idx" ON "vaa_sys"."onboarding_submissions"("customer_id");
+
+-- AddForeignKey
+ALTER TABLE "vaa_sys"."customer_status_logs" ADD CONSTRAINT "customer_status_logs_customer_id_fkey" FOREIGN KEY ("customer_id") REFERENCES "vaa_sys"."customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "vaa_sys"."onboarding_links" ADD CONSTRAINT "onboarding_links_customer_id_fkey" FOREIGN KEY ("customer_id") REFERENCES "vaa_sys"."customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "vaa_sys"."onboarding_submissions" ADD CONSTRAINT "onboarding_submissions_link_id_fkey" FOREIGN KEY ("link_id") REFERENCES "vaa_sys"."onboarding_links"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "vaa_sys"."onboarding_submissions" ADD CONSTRAINT "onboarding_submissions_customer_id_fkey" FOREIGN KEY ("customer_id") REFERENCES "vaa_sys"."customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+
+-- ── Hand-added (not generated by Prisma) ─────────────────────────────
+-- Link every customer and status change to the va-management staff
+-- account that made it. SET NULL so deleting a user there never touches
+-- these rows.
+ALTER TABLE "vaa_sys"."customers" ADD CONSTRAINT "customers_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "public"."users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "vaa_sys"."customer_status_logs" ADD CONSTRAINT "customer_status_logs_changed_by_id_fkey" FOREIGN KEY ("changed_by_id") REFERENCES "public"."users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- Only the app's server connection reads these tables. RLS with no
+-- policies keeps them closed to Supabase's anon/authenticated API roles.
+ALTER TABLE "vaa_sys"."access_users" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "vaa_sys"."customers" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "vaa_sys"."customer_status_logs" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "vaa_sys"."onboarding_links" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "vaa_sys"."onboarding_submissions" ENABLE ROW LEVEL SECURITY;
