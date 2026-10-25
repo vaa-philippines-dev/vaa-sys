@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { prisma } from '@/lib/prisma'
-import { findLink, listServices } from '@/lib/onboarding'
+import { findLink } from '@/lib/onboarding'
 import { generateAccountCode } from '@/lib/customers'
 import { firstIssue, nightDifferentialHours, onboardingSchema, part3AnswersSchema, shiftHours, type OnboardingInput, type Part3Answers, type VaRequest } from '@/lib/onboarding-fields'
 import type { ActionResult } from '@/lib/customer-fields'
@@ -28,10 +28,6 @@ export async function submitOnboarding(token: string, input: OnboardingInput): P
     return { ok: false, error: firstIssue(parsed.error, inPart2 ? 'VA service' : '') }
   }
   const { part1, part2, part3 } = parsed.data
-
-  const services = await listServices()
-  const unknown = part2.requests.find((r) => !services.includes(r.service))
-  if (unknown) return { ok: false, error: `“${unknown.service}” isn’t one of our services. Please choose from the list.` }
 
   const invoiceContact =
     part1.invoice.source === 'PRIMARY'
@@ -61,14 +57,12 @@ export async function submitOnboarding(token: string, input: OnboardingInput): P
           timeZone: part1.company.timeZone || null,
           platforms: business.platforms,
           platformOther: business.platforms.includes('Other') ? business.platformOther : null,
-          fulfillmentType: business.fulfillmentType || null,
-          sellerType: business.sellerType || null,
           otherInfo: business.otherInfo || null,
           invoiceContactSource: part1.invoice.source,
           invoiceContactName: invoiceContact.name,
           invoiceContactRole: invoiceContact.role || null,
           invoiceContactEmail: invoiceContact.email.toLowerCase(),
-          hasPayoneerOrWise: part1.payment.hasPayoneerOrWise,
+          hasPayoneerOrWise: part1.primary.region === 'Israel' ? null : part1.payment.hasPayoneerOrWise,
           paymentMethod: part1.payment.method,
           paymentMethodOther: part1.payment.method === 'OTHER' ? part1.payment.methodOther : null,
           billingCountry: part1.payment.billingCountry || null,

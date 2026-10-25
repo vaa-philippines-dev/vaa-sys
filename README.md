@@ -8,14 +8,15 @@ One app with two areas on one database. It replaces the legacy Apps Script CMS s
   - **Part 1, customer profile:**
     - primary and secondary contacts with roles, and whether the primary contact is the focal person
     - company, DBA name, business address, website
-    - the platforms the VAs will work on, FBA or FBM, private label or reseller, and any other information
+    - region of residence (The Americas, Europe, Israel, Middle East, Asia-Pacific)
+    - the platforms the VAs will work on, and any other information (where Google's hint asks about FBA/FBM and private label or reseller)
     - the invoice contact
-    - payment details: whether they have an active Payoneer or Wise account, and the payment method. Customers in Israel choose from Payoneer, Wise, NIS bank transfer or Other; everyone else from Payoneer, Wise, ACH, SWIFT, credit card or Other.
+    - payment details. Customers in Israel choose from Payoneer, Wise, NIS bank transfer or Other. Everyone else is asked whether they have an active Payoneer or Wise account and chooses from Payoneer, Wise, ACH, SWIFT, credit card or Other.
   - **Part 2, skill requirements:** one VA service per service type, each with:
-    - service, quantity and target start date
-    - work hour type: daily fixed (Philippine time), daily flexible, weekly flexible, or project hours, at 3 to 9 hours a day and 15 to 45 hours a week. A daily-fixed shift between 10 PM and 6 AM is flagged for night differential.
+    - service offering (the Google Form's list), quantity and target start date
+    - work hour type: initial project hours, daily fixed (Philippine time), daily flexible, or weekly, at 3 to 9 hours a day and 15 to 45 hours a week. A daily-fixed shift between 10 PM and 6 AM is flagged for night differential.
     - additional hours, tasks and tools
-  - **Part 3, VA personality preference:** optional. A customer who skips it can complete it later on the same link, even after the link's 14 days, and the lead's page shows it as not filled in yet with the link to copy.
+  - **Part 3, VA personality preference:** optional. Ten scenarios, each with four statements rated 1 (least preferred) to 5 (most preferred). The statements follow the DISC styles in the same order every time, so the lead's page shows a total per style. A customer who skips it can complete it later on the same link, even after the link's 14 days, and the lead's page shows it as not filled in yet with the link to copy.
 
 Same stack as `va-management`: Next.js 16, React 19, Tailwind v4, shadcn, Prisma 7 with `@prisma/adapter-pg`, and Supabase Auth with Google.
 
@@ -72,7 +73,7 @@ The app shares va-management's Supabase Postgres but only owns the **`vaa_sys`**
 | `customer_status_logs` | every status change (from, to, reason, who, when) |
 | `onboarding_links` | link token, expiry, when it was opened, when it was submitted |
 | `onboarding_submissions` | exactly what the customer submitted, kept for reference, and the Part 3 answers once given |
-| `accounts` | account ID, name, company, DBA name, business address, website, time zone, platforms, FBA/FBM, seller type, invoice contact, payment details |
+| `accounts` | account ID, name, company, DBA name, business address, website, time zone, platforms, other information, invoice contact, payment details. `fulfillment_type` and `seller_type` are unused. |
 | `account_contacts` | primary and secondary contact (name, role, email, WhatsApp, region, focal) |
 | `tickets` | main ticket per account request (`ticket_number` → TKT-000001) |
 | `ticket_requests` | one sub-ticket per VA service: service, schedule and hours, night differential, additional hours, start date, tasks, tools, request group. `platform` is only set on requests made before the platforms moved to the account. |
@@ -80,7 +81,6 @@ The app shares va-management's Supabase Postgres but only owns the **`vaa_sys`**
 The app reads va-management's data with raw SQL and never modifies it:
 - `public.users` for sign-in
 - `public.customers` for legacy duplicate checks
-- `public.departments`: the onboarding form's service list is the live list of Service departments
 
 Don't run `prisma migrate` or `db push` here. Schema changes are SQL files in `prisma/sql/`:
 
@@ -119,7 +119,6 @@ Set `NEXT_PUBLIC_SITE_URL` to the deployed address, because onboarding links are
 ## Next phases (from the Oct 21 meeting)
 
 - **Ticket follow-up:** ticket statuses, account managers, and terminations through tickets.
-- **Google Form option lists:** region of residence, FBA/FBM, seller type, and the Part 3 questions in `lib/onboarding-fields.ts` are still drafts until the Google Form's own lists arrive.
-- **Service list:** switch to Workforce's official services and positions once database access is given.
+- **Service list:** the form uses the Google Form's service offerings (`lib/onboarding-fields.ts`). Switch to Workforce's official services and positions once database access is given.
 - **Sending the onboarding email from the app,** for example through Resend, which va-management already uses.
 - **Calculations** (phase 2).

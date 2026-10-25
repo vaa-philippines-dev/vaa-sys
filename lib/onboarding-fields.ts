@@ -5,21 +5,12 @@ import { z } from 'zod'
 // profile (contacts, company, platforms, invoicing, payment); Part 2 is the
 // skill requirements, one VA request per service, which become sub-tickets;
 // Part 3 is the optional VA personality preference, which can also be filled
-// in later on the same link. Option lists marked "draft" are best guesses
-// until the Google Form's own lists arrive — change them here and the form
-// follows.
+// in later on the same link. Wording and option lists are the Google Form's
+// own (read from the live form on Oct 26, 2026) — change them here and the
+// form follows.
 
-// Draft: the Google Form's "Region of Residence" options.
-export const REGIONS = [
-  'United States',
-  'Canada',
-  'United Kingdom',
-  'Israel',
-  'Rest of Europe',
-  'Middle East',
-  'Asia Pacific',
-  'Other',
-] as const
+// "Primary Contact Region of Residence". Israel gets the NIS payment options.
+export const REGIONS = ['The Americas', 'Europe', 'Israel', 'Middle East', 'Asia-Pacific'] as const
 export type Region = (typeof REGIONS)[number]
 
 // The customer's own time zone, for context. Working hours are always
@@ -68,35 +59,46 @@ export const PLATFORMS = [
   'Amazon (other Marketplace)',
   'Walmart',
   'Shopify',
-  'eBay',
+  'Ebay',
   'Etsy',
   'Own Site',
   'Social Media (Facebook, Instagram, LinkedIn)',
-  'TikTok Shop',
+  'Tiktok Shop',
   'Other',
 ] as const
 export type Platform = (typeof PLATFORMS)[number]
 
-// Draft: the Google Form's FBA/FBM and seller-type options.
-export const FULFILLMENT_TYPES = ['FBA', 'FBM', 'Both FBA and FBM', 'Not applicable'] as const
-export const SELLER_TYPES = ['Private Label Seller', 'Reseller', 'Both', 'Not applicable'] as const
+// "VA - Service Offering".
+export const SERVICE_OFFERINGS = [
+  'Amazon - Virtual Assistant',
+  'Wholesale - Virtual Assistant',
+  'PPC - Virtual Assistant',
+  'Social Media - Virtual Assistant',
+  'Executive Assistant - Virtual Assistant',
+  'Walmart - Virtual Assistant',
+  'Creatives - Graphic Designer',
+  'Creatives - Video Editor',
+  'Creatives - Copywriter',
+  'Shopify VA',
+] as const
 
-// "Work Hour Type". Weekly and daily flexible are hours worked any time;
-// daily fixed has set Philippine-time start and end times; project is a
-// total number of hours.
-export const SCHEDULE_TYPES = ['DAILY_FIXED', 'DAILY_FLEXIBLE', 'WEEKLY_FLEXIBLE', 'PROJECT'] as const
+// "Work Hour Type" (Google: Initial Project Hours | Daily | Weekly), with
+// daily split into fixed and flexible time, which the Google Form asks in a
+// free-text schedule. Daily fixed has set Philippine-time start and end
+// times; project is a total number of hours.
+export const SCHEDULE_TYPES = ['PROJECT', 'DAILY_FIXED', 'DAILY_FLEXIBLE', 'WEEKLY_FLEXIBLE'] as const
 export type ScheduleType = (typeof SCHEDULE_TYPES)[number]
 export const SCHEDULE_LABELS: Record<ScheduleType, string> = {
+  PROJECT: 'Initial project hours',
   DAILY_FIXED: 'Daily, fixed time',
   DAILY_FLEXIBLE: 'Daily, flexible time',
-  WEEKLY_FLEXIBLE: 'Weekly, flexible time',
-  PROJECT: 'Project hours',
+  WEEKLY_FLEXIBLE: 'Weekly',
 }
 export const SCHEDULE_HINTS: Record<ScheduleType, string> = {
+  PROJECT: 'A total number of hours for a project (e.g. 20 project hours).',
   DAILY_FIXED: 'Set start and end times every work day, in Philippine time.',
-  DAILY_FLEXIBLE: 'A set number of hours a day (e.g. 5), worked any time that day.',
-  WEEKLY_FLEXIBLE: 'A set number of hours a week (e.g. 40), worked any time.',
-  PROJECT: 'A total number of hours for a project (e.g. 20).',
+  DAILY_FLEXIBLE: 'A set number of hours a day (e.g. 5 hours daily), worked any time that day.',
+  WEEKLY_FLEXIBLE: 'A set number of hours a week (e.g. 40 hours weekly), worked any time.',
 }
 
 // The Google Form's limits: 3 to 9 hours a day, 15 to 45 hours a week.
@@ -111,41 +113,83 @@ export const REQUEST_GROUPS = ['REGULAR', 'EXPERT', 'CASUAL'] as const
 export type RequestGroup = (typeof REQUEST_GROUPS)[number]
 export const REQUEST_GROUP_LABELS: Record<RequestGroup, string> = { REGULAR: 'Regular', EXPERT: 'Expert', CASUAL: 'Casual' }
 
-// Used only when the service list can't be read from va-management.
-export const FALLBACK_SERVICES = ['Amazon', 'Creatives', 'Executive Assistant', 'PPC', 'Social Media', 'Walmart', 'Wholesale']
+// Part 3, VA personality preference: ten scenarios, each with four
+// statements the customer rates from 1 (least preferred) to 5 (most
+// preferred). The statements are always in the same order, which reads as
+// the DISC styles: D (takes charge), I (engages people), S (supports),
+// C (analyzes).
+export const PART3_STYLES = ['D', 'I', 'S', 'C'] as const
+export const PART3_STYLE_LABELS: Record<(typeof PART3_STYLES)[number], string> = {
+  D: 'Takes charge',
+  I: 'Engages people',
+  S: 'Supports others',
+  C: 'Analyzes and plans',
+}
+export const PART3_MIN = 1
+export const PART3_MAX = 5
 
-// Part 3, VA personality preference. Placeholder questions until the Google
-// Form's own arrive; the form and the lead page render whatever is listed.
-type Part3Base = { id: string; label: string; hint?: string; required?: boolean }
-export type Part3Question =
-  | (Part3Base & { kind: 'text' })
-  | (Part3Base & { kind: 'paragraph' })
-  | (Part3Base & { kind: 'single'; options: readonly string[] })
-  | (Part3Base & { kind: 'multi'; options: readonly string[] })
-
-export const PART3_QUESTIONS: readonly Part3Question[] = [
+export const PART3_SCENARIOS = [
   {
-    id: 'communication',
-    label: 'How would you like your VA to communicate with you?',
-    kind: 'single',
-    options: ['Frequent updates throughout the day', 'A daily summary', 'Only when something needs my attention'],
-    required: true,
+    id: 's1',
+    prompt: 'When faced with a challenge, you’d prefer your VA to:',
+    statements: ['Take charge and lead the effort', 'Encourage collaboration and maintain a positive atmosphere', 'Offer support and help to others', 'Analyze the problem and develop a detailed plan'],
   },
   {
-    id: 'workStyle',
-    label: 'Which work style suits you best?',
-    kind: 'single',
-    options: ['Takes initiative and works independently', 'Follows clear instructions closely', 'A mix of both'],
-    required: true,
+    id: 's2',
+    prompt: 'In social settings, you prefer your VA to:',
+    statements: ['Direct the conversation and make decisions', 'Engage others by fostering a positive, collaborative vibe', 'Listen and provide support', 'Observe and think before speaking'],
   },
   {
-    id: 'traits',
-    label: 'Which traits matter most to you in a VA?',
-    kind: 'multi',
-    options: ['Detail-oriented', 'Proactive', 'Fast learner', 'Organized', 'Creative', 'Calm under pressure'],
+    id: 's3',
+    prompt: 'You prefer your VA’s work style to be best described as:',
+    statements: ['Fast-paced and goal-oriented', 'Creative and spontaneous', 'Steady and dependable', 'Methodical and detail-oriented'],
   },
-  { id: 'notes', label: 'Anything else about the VA you’d like us to know?', kind: 'paragraph' },
-]
+  {
+    id: 's4',
+    prompt: 'When working in a team, you prefer your VA to:',
+    statements: ['Take the lead and assign tasks', 'Promote a positive and engaging team dynamic', 'Support team cohesion and collaboration', 'Focus on organizing and planning'],
+  },
+  {
+    id: 's5',
+    prompt: 'In decision-making, you prefer your VA to:',
+    statements: ['Are quick and decisive', 'Consider how the decision will affect relationships', 'Seek consensus and input from others', 'Gather all the facts and analyze thoroughly'],
+  },
+  {
+    id: 's6',
+    prompt: 'Under stress, you prefer your VA to:',
+    statements: ['Become more assertive and determined', 'Seek out social interactions for support', 'Look for ways to help and support others', 'Retreat to plan and analyze the situation'],
+  },
+  {
+    id: 's7',
+    prompt: 'You prefer your VA to approach new tasks by:',
+    statements: ['Jumping in and take charge', 'Brainstorming creative ideas', 'Considering team needs and collaboration', 'Developing a detailed plan before starting'],
+  },
+  {
+    id: 's8',
+    prompt: 'In conflict situations, you prefer your VA to:',
+    statements: ['Stand your ground and assert your position', 'Maintain composure and promote a calm, respectful atmosphere', 'Mediate and seek a peaceful resolution', 'Look for logical solutions and facts'],
+  },
+  {
+    id: 's9',
+    prompt: 'When presented with a new idea, you prefer your VA to:',
+    statements: [
+      'Evaluate how it aligns with goals and take action',
+      'Encourage enthusiasm and open discussion among the team',
+      'Consider how it impacts collaboration across teams',
+      'Analyze its feasibility and potential impact',
+    ],
+  },
+  {
+    id: 's10',
+    prompt: 'You prefer your VA to handle feedback by:',
+    statements: [
+      'Accepting it as a challenge to improve',
+      'Using it to foster open communication and team rapport',
+      'Listening and providing supportive responses',
+      'Carefully reviewing and use it to make systematic improvements',
+    ],
+  },
+] as const
 
 // ── Philippine-time shift maths ──────────────────────────────────
 
@@ -232,8 +276,6 @@ export const part1Schema = z
     business: z.object({
       platforms: z.array(z.enum(PLATFORMS)).min(1, 'Choose at least one platform the VA will work on.'),
       platformOther: text(200),
-      fulfillmentType: z.union([z.enum(FULFILLMENT_TYPES), z.literal('')]),
-      sellerType: z.union([z.enum(SELLER_TYPES), z.literal('')]),
       otherInfo: text(2000),
     }),
     invoice: z.object({
@@ -244,7 +286,8 @@ export const part1Schema = z
       email: text(200),
     }),
     payment: z.object({
-      hasPayoneerOrWise: z.boolean('Tell us whether you have an active Payoneer or Wise account.'),
+      // Asked of everyone except customers in Israel, as in the Google Form.
+      hasPayoneerOrWise: z.boolean().nullable(),
       method: z.enum(PAYMENT_METHODS, 'Choose a payment method.'),
       methodOther: text(200),
       billingCountry: text(200),
@@ -271,6 +314,9 @@ export const part1Schema = z
     if (!paymentMethodsFor(v.primary.region).includes(v.payment.method)) {
       issue(['payment', 'method'], v.payment.method === 'NIS_BANK_TRANSFER' ? 'NIS bank transfer is only for customers in Israel. Choose another payment method.' : 'Choose one of the payment methods listed.')
     }
+    if (v.primary.region !== 'Israel' && v.payment.hasPayoneerOrWise == null) {
+      issue(['payment', 'hasPayoneerOrWise'], 'Tell us whether you have an active Payoneer or Wise account.')
+    }
     if (v.payment.method === 'OTHER' && !v.payment.methodOther) issue(['payment', 'methodOther'], 'Enter the payment method you’d like to use.')
     if (v.payment.method === 'CREDIT_CARD' && !v.payment.billingCountry) issue(['payment', 'billingCountry'], 'Enter your country and state of residence for credit card payment.')
   })
@@ -280,7 +326,7 @@ const inRange = (v: number | null, min: number, max: number) => v != null && !Nu
 
 export const vaRequestSchema = z
   .object({
-    service: required('the service offering', 100),
+    service: z.enum(SERVICE_OFFERINGS, 'Choose a service offering.'),
     numberOfVas: z.number('Enter how many VAs.').int('Use a whole number of VAs.').min(1, 'At least 1 VA.').max(50),
     targetStartDate: text(10).refine((v) => /^\d{4}-\d{2}-\d{2}$/.test(v), 'Choose a target start date.'),
     scheduleType: z.enum(SCHEDULE_TYPES, 'Choose a work hour type.'),
@@ -327,17 +373,16 @@ export const part2Schema = z.object({
   requests: z.array(vaRequestSchema).min(1, 'Add at least one VA service.').max(20),
 })
 
-// Answers keyed by question id: a string, or a list for multiple choice.
-export const part3AnswersSchema = z.record(z.string(), z.union([text(2000), z.array(text(200)).max(20)])).superRefine((answers, ctx) => {
-  for (const q of PART3_QUESTIONS) {
-    const a = answers[q.id]
-    const empty = a == null || a.length === 0
-    if (q.required && empty) ctx.addIssue({ code: 'custom', path: [q.id], message: `Answer “${q.label}”` })
-    if (empty || !('options' in q)) continue
-    const picked = Array.isArray(a) ? a : [a]
-    if (picked.some((p) => !q.options.includes(p))) ctx.addIssue({ code: 'custom', path: [q.id], message: `Choose from the listed answers for “${q.label}”` })
-  }
-})
+// Part 3 ratings keyed by scenario id: one rating per statement, in order.
+export const part3AnswersSchema = z
+  .record(z.string(), z.array(z.number().int().min(PART3_MIN).max(PART3_MAX).nullable()).length(PART3_STYLES.length))
+  .superRefine((answers, ctx) => {
+    PART3_SCENARIOS.forEach((s, i) => {
+      if (!answers[s.id] || answers[s.id].some((r) => r == null)) ctx.addIssue({ code: 'custom', path: [s.id], message: `Rate all four statements in scenario ${i + 1}.` })
+    })
+    const known = new Set<string>(PART3_SCENARIOS.map((s) => s.id))
+    if (Object.keys(answers).some((k) => !known.has(k))) ctx.addIssue({ code: 'custom', path: [], message: 'Check your answers and try again.' })
+  })
 
 export const part3Schema = z.discriminatedUnion('completeNow', [
   z.object({ completeNow: z.literal(true), answers: part3AnswersSchema }),
@@ -354,9 +399,9 @@ export type OnboardingInput = z.infer<typeof onboardingSchema>
 // Form state allows blanks the schema rejects, so the selects can start empty.
 export type Part1Draft = Omit<Part1, 'primary' | 'payment'> & {
   primary: Omit<Part1['primary'], 'region'> & { region: Region | '' }
-  payment: Omit<Part1['payment'], 'method' | 'hasPayoneerOrWise'> & { method: PaymentMethod | ''; hasPayoneerOrWise: boolean | null }
+  payment: Omit<Part1['payment'], 'method'> & { method: PaymentMethod | '' }
 }
-export type VaRequestDraft = Omit<VaRequest, 'scheduleType'> & { scheduleType: ScheduleType | '' }
+export type VaRequestDraft = Omit<VaRequest, 'service' | 'scheduleType'> & { service: VaRequest['service'] | ''; scheduleType: ScheduleType | '' }
 
 export function emptyPart1(prefillEmail?: string | null): Part1Draft {
   return {
@@ -365,7 +410,7 @@ export function emptyPart1(prefillEmail?: string | null): Part1Draft {
     company: { companyName: '', dbaName: '', businessAddress: '', website: '', timeZone: '' },
     hasSecondary: false,
     secondary: { firstName: '', lastName: '', role: '', email: '', whatsapp: '' },
-    business: { platforms: [], platformOther: '', fulfillmentType: '', sellerType: '', otherInfo: '' },
+    business: { platforms: [], platformOther: '', otherInfo: '' },
     invoice: { source: 'PRIMARY', firstName: '', lastName: '', role: '', email: '' },
     payment: { hasPayoneerOrWise: null, method: '', methodOther: '', billingCountry: '' },
   }
@@ -389,9 +434,13 @@ export function emptyVaRequest(): VaRequestDraft {
   }
 }
 
-// A stored Part 3 answer as display text.
-export function part3AnswerText(a: unknown): string {
-  return Array.isArray(a) ? a.join(', ') : typeof a === 'string' ? a : ''
+export function emptyPart3(): Part3Answers {
+  return Object.fromEntries(PART3_SCENARIOS.map((s) => [s.id, PART3_STYLES.map(() => null)]))
+}
+
+// Each style's total across the ten scenarios (10 to 50), for the lead page.
+export function part3Totals(answers: Part3Answers) {
+  return PART3_STYLES.map((style, i) => ({ style, total: PART3_SCENARIOS.reduce((sum, s) => sum + (answers[s.id]?.[i] ?? 0), 0) }))
 }
 
 export function firstIssue(error: z.ZodError, prefix = '') {

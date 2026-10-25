@@ -9,23 +9,25 @@ import { Textarea } from '@/components/ui/textarea'
 import { NativeSelect } from '@/components/ui/native-select'
 import { submitOnboarding, submitPart3 } from '@/app/onboarding/[token]/actions'
 import {
-  FULFILLMENT_TYPES,
   MAX_HOURS_PER_DAY,
   MAX_HOURS_PER_WEEK,
   MIN_HOURS_PER_DAY,
   MIN_HOURS_PER_WEEK,
-  PART3_QUESTIONS,
+  PART3_MAX,
+  PART3_MIN,
+  PART3_SCENARIOS,
   PAYMENT_LABELS,
   PLATFORMS,
   REGIONS,
   SCHEDULE_HINTS,
   SCHEDULE_LABELS,
   SCHEDULE_TYPES,
-  SELLER_TYPES,
+  SERVICE_OFFERINGS,
   TIME_ZONES,
   TIME_ZONE_LABELS,
   WORK_DAYS,
   emptyPart1,
+  emptyPart3,
   emptyVaRequest,
   firstIssue,
   nightDifferentialHours,
@@ -117,62 +119,76 @@ function scheduleSummary(r: VaRequestDraft) {
   return ''
 }
 
-// The Part 3 questions, shared by the full form and the Part-3-only form.
-function Part3Questions({ answers, onChange }: { answers: Part3Answers; onChange: (id: string, value: string | string[]) => void }) {
+const RATINGS = Array.from({ length: PART3_MAX - PART3_MIN + 1 }, (_, i) => PART3_MIN + i)
+
+// The Part 3 scenarios, shared by the full form and the Part-3-only form:
+// each statement rated 1 (least preferred) to 5 (most preferred).
+function Part3Ratings({ answers, onChange }: { answers: Part3Answers; onChange: (scenarioId: string, index: number, rating: number) => void }) {
   return (
-    <div className="space-y-5">
-      {PART3_QUESTIONS.map((q) => {
-        const id = `p3-${q.id}`
-        const value = answers[q.id]
-        if (q.kind === 'text' || q.kind === 'paragraph') {
-          const Control = q.kind === 'text' ? Input : Textarea
-          return (
-            <Field key={q.id} id={id} label={q.label} required={q.required} hint={q.hint}>
-              <Control id={id} value={typeof value === 'string' ? value : ''} onChange={(e) => onChange(q.id, e.target.value)} />
-            </Field>
-          )
-        }
-        if (q.kind === 'single') {
-          return (
-            <Choice
-              key={q.id}
-              name={id}
-              legend={q.label}
-              required={q.required}
-              stacked
-              value={typeof value === 'string' ? value : null}
-              onChange={(v) => onChange(q.id, v)}
-              options={q.options.map((o) => ({ value: o, label: o }))}
-            />
-          )
-        }
-        const picked = Array.isArray(value) ? value : []
-        return (
-          <fieldset key={q.id} className="space-y-2">
-            <legend className="text-sm font-medium">
-              {q.label} {q.required ? <span className="text-destructive">*</span> : <span className="font-normal text-muted-foreground">(choose any)</span>}
-            </legend>
-            <div className="grid gap-2 text-sm sm:grid-cols-2">
-              {q.options.map((o) => (
-                <label key={o} className="flex items-center gap-2">
-                  <input type="checkbox" checked={picked.includes(o)} onChange={() => onChange(q.id, toggle(picked, o, q.options))} className="accent-primary" />
-                  {o}
-                </label>
-              ))}
-            </div>
-          </fieldset>
-        )
-      })}
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        For each scenario, rate the responses from <strong className="font-medium text-foreground">Most Preferred ({PART3_MAX})</strong> to{' '}
+        <strong className="font-medium text-foreground">Least Preferred ({PART3_MIN})</strong> based on how you’d ideally like your VA to respond or behave. Please answer honestly, based on
+        what you believe would work best for your personal or business needs. Every statement needs a rating.
+      </p>
+      {PART3_SCENARIOS.map((sc, n) => (
+        <fieldset key={sc.id} className="space-y-3 rounded-lg border p-4">
+          <legend className="px-1 text-sm font-medium">
+            {n + 1}. {sc.prompt} <span className="text-destructive">*</span>
+          </legend>
+          {sc.statements.map((statement, i) => {
+            const value = answers[sc.id]?.[i] ?? null
+            return (
+              <div key={statement} className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <p className="text-sm">{statement}</p>
+                <div role="radiogroup" aria-label={statement} className="flex shrink-0 gap-1">
+                  {RATINGS.map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      role="radio"
+                      aria-checked={value === r}
+                      aria-label={`${r}${r === PART3_MIN ? ', least preferred' : r === PART3_MAX ? ', most preferred' : ''}`}
+                      onClick={() => onChange(sc.id, i, r)}
+                      className={cn(
+                        'h-8 w-9 rounded-lg border text-sm',
+                        value === r ? 'border-primary bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-muted'
+                      )}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+          <p className="flex justify-end gap-1 text-[11px] text-muted-foreground sm:pr-0">
+            {PART3_MIN} = least preferred · {PART3_MAX} = most preferred
+          </p>
+        </fieldset>
+      ))}
     </div>
   )
 }
 
 const PART3_INTRO = (
   <>
-    <p>This section is an important part of selecting the right Virtual Assistant for you. While you may skip it for now, you’ll still be asked to complete it later as we move forward in the process.</p>
-    <p>Share your preferences on work style, communication and personality traits. This helps us match you with a VA who not only has the right skills but also fits your preferred way of working.</p>
+    <p>
+      This section is an important part of selecting the right Virtual Assistant for you. While you may skip it for now, you’ll still be asked to complete it later as we move forward in the
+      process. It only takes a few minutes and is highly recommended for the most accurate VA match.
+    </p>
+    <p>
+      You’ll share your preferences on work style, communication and personality traits. This helps us match you with a VA who not only has the right skills but also aligns with your
+      preferred way of working.
+    </p>
   </>
 )
+
+function setRating(answers: Part3Answers, scenarioId: string, index: number, rating: number): Part3Answers {
+  const row = [...(answers[scenarioId] ?? [])]
+  row[index] = rating
+  return { ...answers, [scenarioId]: row }
+}
 
 function Thanks({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -200,14 +216,12 @@ export function OnboardingForm({
   customerName,
   customerCode,
   prefillEmail,
-  services,
   part3Only,
 }: {
   token: string
   customerName: string
   customerCode: string
   prefillEmail: string | null
-  services: string[]
   // The form is in and only Part 3 is left. The page re-renders with this
   // set right after a submission that skipped Part 3, so the thank-you
   // screen below stays up instead of jumping straight to Part 3.
@@ -217,7 +231,7 @@ export function OnboardingForm({
   const [p1, setP1] = useState<Part1Draft>(() => emptyPart1(prefillEmail))
   const [requests, setRequests] = useState<VaRequestDraft[]>(() => [emptyVaRequest()])
   const [part3Now, setPart3Now] = useState<'YES' | 'NO' | null>(null)
-  const [answers, setAnswers] = useState<Part3Answers>({})
+  const [answers, setAnswers] = useState<Part3Answers>(emptyPart3)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
   const [showPart3, setShowPart3] = useState(false)
@@ -247,7 +261,7 @@ export function OnboardingForm({
   const setFocal = (focalContact: Part1Draft['focalContact']) => setP1((v) => ({ ...v, focalContact, hasSecondary: v.hasSecondary || focalContact === 'SECONDARY' }))
   const setRequest = (i: number, patch: Partial<VaRequestDraft>) => setRequests((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)))
   const toggleDay = (i: number, day: (typeof WORK_DAYS)[number]) => setRequests((rs) => rs.map((r, j) => (j === i ? { ...r, workDays: toggle(r.workDays, day, WORK_DAYS) } : r)))
-  const setAnswer = (id: string, value: string | string[]) => setAnswers((a) => ({ ...a, [id]: value }))
+  const setAnswer = (scenarioId: string, index: number, rating: number) => setAnswers((a) => setRating(a, scenarioId, index, rating))
 
   const go = (next: number) => {
     setError(null)
@@ -286,10 +300,10 @@ export function OnboardingForm({
   if (done) {
     return (
       <Thanks title={`Thank you, ${p1.primary.firstName}!`}>
-        <p>We’ve received your onboarding details. Our team will contact you about the next steps.</p>
+        <p>Parts 1 and 2 have been successfully recorded and will be used in preparing your contract. Our team will contact you about the next steps.</p>
         {part3Now === 'NO' && (
           <>
-            <p>You can complete the VA personality preference any time by opening the same link again.</p>
+            <p>You can complete Part 3, the VA personality preference, any time by opening the same link again, or we’ll let you know when it’s time to fill it out.</p>
             <Button variant="outline" onClick={() => setShowPart3(true)}>
               Complete it now <ArrowRight />
             </Button>
@@ -457,27 +471,9 @@ export function OnboardingForm({
                 <Input aria-label="Other platform" value={p1.business.platformOther} onChange={(e) => setBusiness({ platformOther: e.target.value })} placeholder="Which other platform?" className="sm:max-w-sm" />
               )}
             </fieldset>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field id="b-fulfil" label="Are you doing FBA or FBM?">
-                <NativeSelect id="b-fulfil" value={p1.business.fulfillmentType} onChange={(e) => setBusiness({ fulfillmentType: e.target.value as Part1Draft['business']['fulfillmentType'] })}>
-                  <option value="">Choose one</option>
-                  {FULFILLMENT_TYPES.map((t) => (
-                    <option key={t}>{t}</option>
-                  ))}
-                </NativeSelect>
-              </Field>
-              <Field id="b-seller" label="Are you a private label seller or reseller?">
-                <NativeSelect id="b-seller" value={p1.business.sellerType} onChange={(e) => setBusiness({ sellerType: e.target.value as Part1Draft['business']['sellerType'] })}>
-                  <option value="">Choose one</option>
-                  {SELLER_TYPES.map((t) => (
-                    <option key={t}>{t}</option>
-                  ))}
-                </NativeSelect>
-              </Field>
-              <Field id="b-other" label="Any other information you would like to share?" className="sm:col-span-2">
-                <Textarea id="b-other" value={p1.business.otherInfo} onChange={(e) => setBusiness({ otherInfo: e.target.value })} />
-              </Field>
-            </div>
+            <Field id="b-other" label="Any other information you would like to share?" hint="Are you doing FBA or FBM? Are you a Private Label Seller or Reseller?">
+              <Textarea id="b-other" value={p1.business.otherInfo} onChange={(e) => setBusiness({ otherInfo: e.target.value })} />
+            </Field>
           </Section>
 
           <Section title="Invoice contact">
@@ -513,17 +509,19 @@ export function OnboardingForm({
               )
             }
           >
-            <Choice
-              name="payoneer-wise"
-              legend="Do you have an active (with funds available) account in Payoneer or Wise?"
-              required
-              value={p1.payment.hasPayoneerOrWise == null ? null : p1.payment.hasPayoneerOrWise ? 'YES' : 'NO'}
-              onChange={(v) => setPayment({ hasPayoneerOrWise: v === 'YES' })}
-              options={[
-                { value: 'YES', label: 'Yes' },
-                { value: 'NO', label: 'No' },
-              ]}
-            />
+            {!israel && (
+              <Choice
+                name="payoneer-wise"
+                legend="Do you have an active (with funds available) account in Payoneer or Wise?"
+                required
+                value={p1.payment.hasPayoneerOrWise == null ? null : p1.payment.hasPayoneerOrWise ? 'YES' : 'NO'}
+                onChange={(v) => setPayment({ hasPayoneerOrWise: v === 'YES' })}
+                options={[
+                  { value: 'YES', label: 'Yes' },
+                  { value: 'NO', label: 'No' },
+                ]}
+              />
+            )}
             <div className="grid gap-4 sm:grid-cols-2">
               <Field id="pay-method" label="Payment method" required hint={p1.primary.region ? undefined : 'Choose the primary contact’s region of residence first to see every option.'}>
                 <NativeSelect id="pay-method" value={p1.payment.method} onChange={(e) => setPayment({ method: e.target.value as Part1Draft['payment']['method'] })}>
@@ -573,9 +571,9 @@ export function OnboardingForm({
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field id={`r${i}-service`} label="Service offering" required>
-                    <NativeSelect id={`r${i}-service`} value={r.service} onChange={(e) => setRequest(i, { service: e.target.value })}>
+                    <NativeSelect id={`r${i}-service`} value={r.service} onChange={(e) => setRequest(i, { service: e.target.value as VaRequestDraft['service'] })}>
                       <option value="">Choose a service</option>
-                      {services.map((s) => (
+                      {SERVICE_OFFERINGS.map((s) => (
                         <option key={s}>{s}</option>
                       ))}
                     </NativeSelect>
@@ -737,7 +735,7 @@ export function OnboardingForm({
           />
           {part3Now === 'YES' && (
             <div className="border-t pt-5">
-              <Part3Questions answers={answers} onChange={setAnswer} />
+              <Part3Ratings answers={answers} onChange={setAnswer} />
             </div>
           )}
         </Section>
@@ -771,10 +769,10 @@ export function OnboardingForm({
             <dd className="whitespace-pre-wrap">{p1.company.businessAddress}</dd>
             <dt className="text-muted-foreground">Platforms</dt>
             <dd>{p1.business.platforms.map((p) => (p === 'Other' && p1.business.platformOther ? p1.business.platformOther : p)).join(', ')}</dd>
-            {(p1.business.fulfillmentType || p1.business.sellerType) && (
+            {p1.business.otherInfo && (
               <>
-                <dt className="text-muted-foreground">Selling</dt>
-                <dd>{[p1.business.fulfillmentType, p1.business.sellerType].filter(Boolean).join(' · ')}</dd>
+                <dt className="text-muted-foreground">Other information</dt>
+                <dd className="whitespace-pre-wrap">{p1.business.otherInfo}</dd>
               </>
             )}
             <dt className="text-muted-foreground">Invoices to</dt>
@@ -789,7 +787,7 @@ export function OnboardingForm({
             <dd>
               {p1.payment.method === 'OTHER' ? p1.payment.methodOther : p1.payment.method && PAYMENT_LABELS[p1.payment.method]}
               {p1.payment.method === 'CREDIT_CARD' && p1.payment.billingCountry && ` from ${p1.payment.billingCountry}`}
-              {p1.payment.hasPayoneerOrWise != null && ` · ${p1.payment.hasPayoneerOrWise ? 'has' : 'no'} active Payoneer or Wise account`}
+              {!israel && p1.payment.hasPayoneerOrWise != null && ` · ${p1.payment.hasPayoneerOrWise ? 'has' : 'no'} active Payoneer or Wise account`}
             </dd>
             <dt className="text-muted-foreground">VA personality</dt>
             <dd>{part3Now === 'YES' ? 'Filled in now' : 'Will complete later'}</dd>
@@ -797,7 +795,7 @@ export function OnboardingForm({
           <ul className="space-y-1 text-sm">
             {requests.map((r, i) => (
               <li key={i} className="rounded-lg border px-3 py-2">
-                {r.numberOfVas} × {r.service} VA: {scheduleSummary(r)}
+                {r.numberOfVas} × {r.service}: {scheduleSummary(r)}
                 {r.additionalHours && ` + ${r.additionalHours}`}, starting {r.targetStartDate}
               </li>
             ))}
@@ -843,7 +841,7 @@ export function OnboardingForm({
 // Part 3 alone, for a customer who skipped it on first submission and came
 // back on the same link.
 export function Part3Form({ token, customerName, returning = true }: { token: string; customerName: string; returning?: boolean }) {
-  const [answers, setAnswers] = useState<Part3Answers>({})
+  const [answers, setAnswers] = useState<Part3Answers>(emptyPart3)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
   const [saving, start] = useTransition()
@@ -863,7 +861,7 @@ export function Part3Form({ token, customerName, returning = true }: { token: st
   if (done) {
     return (
       <Thanks title="Thank you!">
-        <p>We’ve received your VA personality preferences. They’ll help us match you with the right VA.</p>
+        <p>We’ve received your VA personality preferences. They’ll help us match you with the VA who best fits your way of working.</p>
       </Thanks>
     )
   }
@@ -877,7 +875,7 @@ export function Part3Form({ token, customerName, returning = true }: { token: st
         <p className="mt-1 text-sm text-muted-foreground">We have your customer profile and skill requirements. This last step takes only a few minutes. Fields marked * are required.</p>
       </div>
       <Section title="VA personality preference" description={PART3_INTRO}>
-        <Part3Questions answers={answers} onChange={(id, value) => setAnswers((a) => ({ ...a, [id]: value }))} />
+        <Part3Ratings answers={answers} onChange={(id, index, rating) => setAnswers((a) => setRating(a, id, index, rating))} />
       </Section>
       <ErrorNote error={error} />
       <div className="flex justify-end">

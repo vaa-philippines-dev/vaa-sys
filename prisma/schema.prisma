@@ -208,6 +208,8 @@ model Account {
   // The platforms the VAs will work on, for the whole account.
   platforms            String[]             @default([])
   platformOther        String?              @map("platform_other")
+  // Unused: in the Google Form, FBA/FBM and seller type are free text in
+  // otherInfo. Kept to match 004; a later SQL file can drop them.
   fulfillmentType      String?              @map("fulfillment_type")
   sellerType           String?              @map("seller_type")
   otherInfo            String?              @map("other_info")

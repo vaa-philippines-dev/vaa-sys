@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
-import { FALLBACK_SERVICES, LINK_VALID_DAYS } from '@/lib/onboarding-fields'
+import { LINK_VALID_DAYS } from '@/lib/onboarding-fields'
 
 // Server-only: onboarding links and what the public form needs.
 
@@ -52,18 +52,6 @@ export async function findLink(token: string) {
         ? 'EXPIRED'
         : 'OPEN'
   return { state, link }
-}
-
-// Services offered come from va-management's live Service departments, so
-// a new department shows up on the form without a code change.
-export async function listServices(): Promise<string[]> {
-  const rows = await prisma.$queryRaw<{ name: string }[]>`
-    SELECT d.name
-    FROM public.departments d
-    JOIN public.departments p ON p.id = d.parent_id
-    WHERE p.name = 'Service' AND d.status::text = 'ACTIVE'
-    ORDER BY d.name`.catch(() => [])
-  return rows.length > 0 ? rows.map((r) => r.name) : FALLBACK_SERVICES
 }
 
 // The email Lead Management sends with the link.

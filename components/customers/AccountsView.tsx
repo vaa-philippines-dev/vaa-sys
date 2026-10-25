@@ -4,15 +4,19 @@ import { CopyButton } from '@/components/leads/OnboardingLinkPanel'
 import { manilaDate, manilaDateTime } from '@/lib/customer-fields'
 import { onboardingUrl } from '@/lib/onboarding'
 import {
-  PART3_QUESTIONS,
+  PART3_SCENARIOS,
+  PART3_STYLE_LABELS,
+  PART3_STYLES,
   PAYMENT_LABELS,
   REQUEST_GROUP_LABELS,
   SCHEDULE_LABELS,
   TIME_ZONE_LABELS,
-  part3AnswerText,
+  part3Totals,
   subTicketCode,
   ticketCode,
+  type Part3Answers,
 } from '@/lib/onboarding-fields'
+import { cn } from '@/lib/utils'
 import type { getCustomer } from '@/lib/customers'
 
 type Account = NonNullable<Awaited<ReturnType<typeof getCustomer>>>['accounts'][number]
@@ -64,20 +68,48 @@ function Personality({ submission }: { submission: NonNullable<Account['submissi
       </div>
     )
   }
-  const answers = (submission.part3 ?? {}) as Record<string, unknown>
-  const known = new Set(PART3_QUESTIONS.map((q) => q.id))
+  const answers = (submission.part3 ?? {}) as Part3Answers
+  const totals = part3Totals(answers)
+  const top = Math.max(...totals.map((t) => t.total))
+  const max = PART3_SCENARIOS.length * 5
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <p className="text-xs text-muted-foreground">Filled in {submission.part3SubmittedAt.toLocaleString('en-PH', manilaDateTime)}</p>
-      <Rows
-        items={[
-          ...PART3_QUESTIONS.map((q): [string, React.ReactNode] => [q.label, part3AnswerText(answers[q.id]) || null]),
-          // Answers to questions since removed from the form are still shown.
-          ...Object.keys(answers)
-            .filter((k) => !known.has(k))
-            .map((k): [string, React.ReactNode] => [k, part3AnswerText(answers[k])]),
-        ]}
-      />
+      <div>
+        <p className="mb-1.5 text-sm">Totals across the ten scenarios, out of {max}. Each scenario’s four statements follow the DISC styles, in order D, I, S, C.</p>
+        <ul className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+          {totals.map((t) => (
+            <li key={t.style} className={cn('rounded-lg border px-3 py-2', t.total === top && 'border-primary bg-primary/5')}>
+              <p className="text-xs text-muted-foreground">
+                {t.style} · {PART3_STYLE_LABELS[t.style]}
+              </p>
+              <p className="text-lg font-semibold tabular-nums">{t.total}</p>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <details className="text-sm">
+        <summary className="cursor-pointer text-muted-foreground">All ratings (1 least preferred, 5 most preferred)</summary>
+        <ol className="mt-2 space-y-3">
+          {PART3_SCENARIOS.map((sc, n) => (
+            <li key={sc.id}>
+              <p className="font-medium">
+                {n + 1}. {sc.prompt}
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {sc.statements.map((statement, i) => (
+                  <li key={statement} className="flex justify-between gap-3 text-muted-foreground">
+                    <span>
+                      <span className="font-mono text-xs">{PART3_STYLES[i]}</span> {statement}
+                    </span>
+                    <span className="font-medium tabular-nums text-foreground">{answers[sc.id]?.[i] ?? '–'}</span>
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ol>
+      </details>
     </div>
   )
 }
@@ -112,8 +144,6 @@ export function AccountsView({ accounts, canSetGroup }: { accounts: Account[]; c
                     ['Time zone', a.timeZone ? TIME_ZONE_LABELS[a.timeZone] ?? a.timeZone : null],
                     ['Lives in', primary?.region],
                     ['Platforms', (a.platforms ?? []).map((p) => (p === 'Other' && a.platformOther ? `Other: ${a.platformOther}` : p)).join(', ')],
-                    ['FBA or FBM', a.fulfillmentType],
-                    ['Seller type', a.sellerType],
                     ['Invoices to', `${a.invoiceContactName ?? ''}${a.invoiceContactRole ? `, ${a.invoiceContactRole}` : ''} (${a.invoiceContactEmail})`],
                     [
                       'Pays by',
@@ -161,7 +191,7 @@ export function AccountsView({ accounts, canSetGroup }: { accounts: Account[]; c
                         <div>
                           <p className="font-mono text-xs text-muted-foreground">{subTicketCode(t.ticketNumber, r.lineNo)}</p>
                           <p className="text-sm font-medium">
-                            {r.numberOfVas} × {r.service} VA{r.platform && ` on ${r.platform}`}
+                            {r.numberOfVas} × {r.service}{r.platform && ` on ${r.platform}`}
                           </p>
                         </div>
                         {canSetGroup ? (
