@@ -1,0 +1,16 @@
+{
+  "scriptId": "1JD2yqUIH3iPaiu6OW6zvtqyPh_k5Y4stMnWjj9nex_Cp7kI2iFpo27ES",
+  "rootDir": "legacy\\vaa-cms-gas",
+  "scriptExtensions": [
+    ".js",
+    ".gs"
+  ],
+  "htmlExtensions": [
+    ".html"
+  ],
+  "jsonExtensions": [
+    ".json"
+  ],
+  "filePushOrder": [],
+  "skipSubdirectories": false
+}

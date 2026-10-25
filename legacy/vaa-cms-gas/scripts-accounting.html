@@ -1,0 +1,1464 @@
+<script>
+// ═══════════════════════════════════════════════════════════════════════
+// ACCOUNTING MODULE — Phase 1: Core Ledger (frontend)
+// ═══════════════════════════════════════════════════════════════════════
+// Client Billing Dashboard, manual invoice entry, payment recording,
+// deposits, and enrollment (One-Time Fee gating). Matches the backend's
+// Phase 1 scope in AccountingService.gs — no automated billing
+// generation, reconciliation, ND, or Training Bond screens yet.
+
+function _acctInitModule() {
+  showToast('Checking Accounting tabs…', 'info');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { showToast((res&&res.error)||'Failed.', 'error'); return; }
+      var msg = res.created.length ? 'Created: ' + res.created.join(', ') : 'All tabs already existed.';
+      if (res.migrated.length) msg += ' — Updated columns on: ' + res.migrated.join(', ');
+      showToast(msg, 'success');
+    })
+    .withFailureHandler(function(err) { showToast(err.message, 'error'); })
+    .initializeAccountingModule();
+}
+
+var _acctSelectedCustomerId = null;
+var _acctDashboardData = null;
+
+var _acctActiveTab = 'fees';
+function _renderAccountingPage(container) {
+  container.innerHTML =
+    '<div id="acctPageWrap" style="padding:20px;max-width:1100px;">' +
+      '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">' +
+        '<div>' +
+          '<div style="font-size:22px;font-weight:800;letter-spacing:-0.3px;margin-bottom:4px;">Billing &amp; Payments</div>' +
+          '<div style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">Client invoices, payments, deposits, department enrollment, and hours reconciliation.</div>' +
+        '</div>' +
+        (CMS.user && CMS.user.role === 'Administrator' ? '<button class="btn btn-ghost btn-sm" style="flex-shrink:0;" onclick="_acctInitModule()">⚙ Initialize Accounting Tabs</button>' : '') +
+      '</div>' +
+      '<div class="req-type-tabs" id="acctTopTabs" style="margin-bottom:16px;">' +
+        ['fees','billing','reconciliation','bond','grid','vaconn'].map(function(t) {
+          var labels = { billing: 'Client Billing', reconciliation: 'Reconciliation Review', bond: 'Training Bond', fees: 'Fees & Deposits', grid: 'Billing Grid', vaconn: 'VA Connections' };
+          return '<button class="req-type-tab'+(_acctActiveTab===t?' active':'')+'" data-tab="'+t+'" onclick="_acctSwitchTopTab(\''+t+'\')">'+labels[t]+'</button>';
+        }).join('') +
+      '</div>' +
+      '<div id="acctTopTabBody"></div>' +
+    '</div>';
+  _acctRenderActiveTopTab();
+}
+function _acctSwitchTopTab(tab) {
+  _acctActiveTab = tab;
+  var tabsWrap = document.getElementById('acctTopTabs');
+  if (tabsWrap) Array.prototype.forEach.call(tabsWrap.querySelectorAll('.req-type-tab'), function(btn) {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+  var pageWrap = document.getElementById('acctPageWrap');
+  if (pageWrap) pageWrap.style.maxWidth = (tab === 'fees' || tab === 'grid') ? 'none' : '1100px';
+  _acctRenderActiveTopTab();
+}
+function _acctRenderActiveTopTab() {
+  var body = document.getElementById('acctTopTabBody'); if (!body) return;
+  if (_acctActiveTab === 'billing') { _acctRenderClientBillingTab(body); return; }
+  if (_acctActiveTab === 'reconciliation') { _acctRenderReconciliationTab(body); return; }
+  if (_acctActiveTab === 'bond') { _acctRenderBondTab(body); return; }
+  if (_acctActiveTab === 'fees') { _acctRenderFeesTab(body); return; }
+  if (_acctActiveTab === 'grid') { _acctRenderGridTab(body); return; }
+  if (_acctActiveTab === 'vaconn') { _acctRenderVAConnTab(body); return; }
+}
+
+function _acctRenderClientBillingTab(container) {
+  container.innerHTML =
+    '<div class="form-group" style="max-width:420px;">' +
+      '<label class="form-label">Customer</label>' +
+      '<select class="form-select" id="acctCustomerSelect" onchange="_acctSelectCustomer(this.value)"><option value="">Select a customer…</option></select>' +
+    '</div>' +
+    '<div id="acctDashboardWrap" style="margin-top:20px;"></div>';
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      var sel = document.getElementById('acctCustomerSelect'); if (!sel || !res) return;
+      var list = res.data || res || [];
+      sel.innerHTML = '<option value="">Select a customer…</option>' +
+        list.slice().sort(function(a,b){ return (a.customerName||'').localeCompare(b.customerName||''); })
+          .map(function(c){ return '<option value="'+_esc(c.customerId)+'">'+_esc(c.customerName)+'</option>'; }).join('');
+      if (_acctSelectedCustomerId) { sel.value = _acctSelectedCustomerId; _acctSelectCustomer(_acctSelectedCustomerId); }
+    })
+    .withFailureHandler(function(err) { showToast('Could not load customers: ' + err.message, 'error'); })
+    .getCustomers({});
+}
+
+function _acctSelectCustomer(customerId) {
+  _acctSelectedCustomerId = customerId || null;
+  var wrap = document.getElementById('acctDashboardWrap'); if (!wrap) return;
+  if (!customerId) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = _loadingHtml('Loading billing dashboard…', '200px');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { wrap.innerHTML = '<div class="empty-state"><h3>Error</h3><p>'+_esc((res&&res.error)||'Something went wrong loading this dashboard.')+'</p></div>'; return; }
+      _acctDashboardData = res.data;
+      _acctRenderDashboard(wrap);
+    })
+    .withFailureHandler(function(err) { wrap.innerHTML = '<div class="empty-state"><h3>Error</h3><p>'+_esc(err.message)+'</p></div>'; })
+    .getClientBillingDashboard(customerId);
+}
+
+function _acctRenderDashboard(wrap) {
+  var d = _acctDashboardData;
+  var latest = d.latestBilling;
+
+  wrap.innerHTML =
+    // Summary cards
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px;">' +
+      '<div class="section-card"><div class="detail-label" style="font-size:10.5px;">TOTAL OUTSTANDING</div><div style="font-size:22px;font-weight:800;color:'+(d.totalOutstanding>0?'#dc2626':'#15803d')+';">$'+_acctFmt(d.totalOutstanding)+'</div></div>' +
+      '<div class="section-card"><div class="detail-label" style="font-size:10.5px;">DEPOSIT BALANCE</div><div style="font-size:22px;font-weight:800;">$'+_acctFmt(d.depositBalance)+'</div></div>' +
+      '<div class="section-card"><div class="detail-label" style="font-size:10.5px;">LAST INVOICE</div><div style="font-size:16px;font-weight:700;">'+(latest?('$'+_acctFmt(latest.totalBilled)+' — '+_esc(latest.billingMonth)):'—')+'</div>'+(latest?'<span class="badge '+_acctStatusBadgeClass(latest.status)+'" style="margin-top:4px;">'+_esc(latest.status)+'</span>':'')+'</div>' +
+    '</div>' +
+
+    // Billing Cycles
+    '<div class="section-card" style="margin-bottom:16px;">' +
+      '<div class="section-header"><div class="section-title">Billing Cycles (Invoices)</div>' +
+        '<button class="btn btn-primary btn-sm" onclick="_acctOpenGenerateInvoice()">⚡ Generate Invoice</button>' +
+        '<button class="btn btn-secondary btn-sm" onclick="_acctOpenNewInvoice()">+ Manual Invoice</button>' +
+      '</div>' +
+      '<div class="table-wrap"><table>' +
+        '<thead><tr><th>Billing Month</th><th>Service Month</th><th>Total Billed</th><th>Status</th><th>Expected Payment</th><th></th></tr></thead>' +
+        '<tbody>' + (d.billingHistory.length ? d.billingHistory.map(function(b) {
+          return '<tr>' +
+            '<td>'+_esc(b.billingMonth)+'</td><td>'+_esc(b.serviceMonth)+'</td>' +
+            '<td>$'+_acctFmt(b.totalBilled)+'</td>' +
+            '<td><span class="badge '+_acctStatusBadgeClass(b.status)+'">'+_esc(b.status)+'</span></td>' +
+            '<td>'+_fdate(b.expectedPaymentDate)+'</td>' +
+            '<td>' + (b.status !== 'Paid' ? '<button class="btn btn-secondary btn-sm" onclick="_acctOpenRecordPayment(\''+_esc(b.billingId)+'\')">Record Payment</button>' : '<span class="muted" style="font-size:11.5px;">Paid</span>') + '</td>' +
+          '</tr>';
+        }).join('') : '<tr><td colspan="6" class="muted" style="text-align:center;padding:16px;">No billing cycles yet.</td></tr>') +
+        '</tbody>' +
+      '</table></div>' +
+    '</div>' +
+
+    // Deposits
+    '<div class="section-card" style="margin-bottom:16px;">' +
+      '<div class="section-header"><div class="section-title">Deposits</div>' +
+        '<button class="btn btn-secondary btn-sm" onclick="_acctOpenNewDeposit()">+ New Deposit</button>' +
+      '</div>' +
+      '<div class="table-wrap"><table>' +
+        '<thead><tr><th>Deposit Fee</th><th>Payment Date</th><th>Applied</th><th>Remaining</th><th></th></tr></thead>' +
+        '<tbody>' + (d.deposits.length ? d.deposits.map(function(dep) {
+          return '<tr>' +
+            '<td>$'+_acctFmt(dep.depositFee)+'</td><td>'+_fdate(dep.paymentDate)+'</td>' +
+            '<td>$'+_acctFmt(dep.amountApplied)+(dep.applicationReason?' <span class="muted" style="font-size:11px;">('+_esc(dep.applicationReason)+')</span>':'')+'</td>' +
+            '<td style="font-weight:700;">$'+_acctFmt(dep.remainingBalance)+'</td>' +
+            '<td>' + (dep.remainingBalance > 0 ? '<button class="btn btn-secondary btn-sm" onclick="_acctOpenApplyDeposit(\''+_esc(dep.depositId)+'\','+dep.remainingBalance+')">Apply</button>' : '') + '</td>' +
+          '</tr>';
+        }).join('') : '<tr><td colspan="5" class="muted" style="text-align:center;padding:16px;">No deposits yet.</td></tr>') +
+        '</tbody>' +
+      '</table></div>' +
+    '</div>' +
+
+    // Enrollments
+    '<div class="section-card">' +
+      '<div class="section-header"><div class="section-title">Department Enrollment &amp; One-Time Fees</div>' +
+        '<button class="btn btn-secondary btn-sm" onclick="_acctOpenNewEnrollment()">+ New Enrollment</button>' +
+      '</div>' +
+      '<div class="table-wrap"><table>' +
+        '<thead><tr><th>Department</th><th>First Activated</th><th>One-Time Fee</th><th>Waived/Discounted</th></tr></thead>' +
+        '<tbody>' + (d.enrollments.length ? d.enrollments.map(function(en) {
+          return '<tr>' +
+            '<td>'+_esc(en.department)+'</td><td>'+_fdate(en.dateFirstActivated)+'</td>' +
+            '<td>'+(en.oneTimeFeeCharged?'$'+_acctFmt(en.oneTimeFeeAmount):'<span class="muted">—</span>')+'</td>' +
+            '<td>'+(en.waivedOrDiscounted?'<span class="badge badge-inactive">Yes — '+_esc(en.waiverReason)+'</span>':'<span class="muted">No</span>')+'</td>' +
+          '</tr>';
+        }).join('') : '<tr><td colspan="4" class="muted" style="text-align:center;padding:16px;">No department enrollments yet.</td></tr>') +
+        '</tbody>' +
+      '</table></div>' +
+    '</div>';
+}
+function _acctFmt(n) { return (Number(n)||0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function _acctStatusBadgeClass(status) {
+  var map = { Paid: 'badge-active', Issued: 'badge-returning', PartiallyPaid: 'badge-inactive', Overdue: 'badge-terminated', Draft: 'badge-role' };
+  return map[status] || 'badge-role';
+}
+
+// ── Invoice Generator (§5.2, §4.2-4.3 automated) ────────────────────
+function _acctOpenGenerateInvoice() {
+  document.getElementById('modalBox').style.maxWidth = '600px';
+  openModal(
+    '<div class="modal-header"><div class="modal-title">Generate Invoice</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-group"><label class="form-label">Billing Month <span class="required">*</span></label><input class="form-input" id="f_acctGenMonth" type="month" /></div>' +
+      '<div class="form-hint">Pulls live effective rates, night differential config, and mid-month start proration automatically. Actual hours (for Postpaid billing and Night Differential) still need to be entered per VA below — there\'s no attendance-import source yet to derive those automatically.</div>' +
+      '<div id="acctGenErr" style="color:var(--danger);font-size:12.5px;margin-top:8px;"></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="btn btn-primary" id="acctGenPreviewBtn" onclick="_acctDoPreviewInvoice()">Preview</button></div>'
+  );
+}
+function _acctDoPreviewInvoice() {
+  var month = (document.getElementById('f_acctGenMonth')||{}).value;
+  var errEl = document.getElementById('acctGenErr');
+  if (!month) { if (errEl) errEl.textContent = 'Billing Month is required.'; return; }
+  var btn = document.getElementById('acctGenPreviewBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { if (errEl) errEl.textContent = (res&&res.error)||'Failed.'; if (btn) { btn.disabled=false; btn.textContent='Preview'; } return; }
+      _acctRenderInvoicePreview(res, month);
+    })
+    .withFailureHandler(function(err) { if (errEl) errEl.textContent = err.message; if (btn) { btn.disabled=false; btn.textContent='Preview'; } })
+    .generateBillingCycle(_acctSelectedCustomerId, month, {}, true);
+}
+function _acctRenderInvoicePreview(res, month) {
+  var rows = res.lineItems.map(function(li) {
+    return '<tr>' +
+      '<td>'+_esc(li.vaName)+'</td>' +
+      '<td>$'+_acctFmt(li.servicePayment||0)+(li.note?' <span class="muted" style="font-size:10.5px;">('+_esc(li.note)+')</span>':'')+'</td>' +
+      '<td>$'+_acctFmt(li.ndAmount||0)+'</td>' +
+    '</tr>';
+  }).join('');
+  var errorsHtml = res.errors && res.errors.length
+    ? '<div style="background:#fef3c7;color:#b45309;font-size:12px;padding:8px 10px;border-radius:6px;margin-top:10px;">⚠ ' + res.errors.map(_esc).join('<br>') + '</div>'
+    : '';
+  var feesHtml = res.pendingOneTimeFees && res.pendingOneTimeFees.length
+    ? '<div style="background:#eff6ff;color:#1e40af;font-size:12px;padding:8px 10px;border-radius:6px;margin-top:10px;">ℹ Department(s) not yet enrolled — a One-Time Fee may be due: '+res.pendingOneTimeFees.map(_esc).join(', ')+'. Use "+ New Enrollment" to charge or waive it separately.</div>'
+    : '';
+
+  openModal(
+    '<div class="modal-header"><div class="modal-title">Invoice Preview — '+_esc(month)+'</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+    '<div class="modal-body" style="max-height:60vh;overflow-y:auto;">' +
+      '<div style="font-size:12.5px;color:var(--text-muted);margin-bottom:8px;">Billing Type: <strong>'+_esc(res.billingType)+'</strong> · Service Month: <strong>'+_esc(res.serviceMonth)+'</strong></div>' +
+      '<div class="table-wrap"><table>' +
+        '<thead><tr><th>VA</th><th>Service Payment</th><th>Night Diff.</th></tr></thead>' +
+        '<tbody>' + (rows || '<tr><td colspan="3" class="muted" style="text-align:center;padding:16px;">No active VA connections for this customer.</td></tr>') + '</tbody>' +
+      '</table></div>' +
+      '<div style="text-align:right;font-size:16px;font-weight:800;margin-top:12px;">Total: $'+_acctFmt(res.totalBilled)+'</div>' +
+      errorsHtml + feesHtml +
+      '<div id="acctGenConfirmErr" style="color:var(--danger);font-size:12.5px;margin-top:8px;"></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-secondary" onclick="_acctOpenGenerateInvoice()">Back</button>' +
+      '<button class="btn btn-primary" id="acctGenConfirmBtn" onclick="_acctDoConfirmGenerate(\''+_esc(month)+'\')">Confirm &amp; Generate</button></div>'
+  );
+}
+function _acctDoConfirmGenerate(month) {
+  var errEl = document.getElementById('acctGenConfirmErr');
+  var btn = document.getElementById('acctGenConfirmBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { if (errEl) errEl.textContent = (res&&res.error)||'Failed.'; if (btn) { btn.disabled=false; btn.textContent='Confirm & Generate'; } return; }
+      showToast('Invoice generated — total $' + _acctFmt(res.totalBilled) + '.', 'success');
+      closeModal();
+      _acctSelectCustomer(_acctSelectedCustomerId);
+    })
+    .withFailureHandler(function(err) { if (errEl) errEl.textContent = err.message; if (btn) { btn.disabled=false; btn.textContent='Confirm & Generate'; } })
+    .generateBillingCycle(_acctSelectedCustomerId, month, {}, false);
+}
+
+// ── New Invoice (manual entry, Phase 1) ─────────────────────────────
+function _acctOpenNewInvoice() {
+  document.getElementById('modalBox').style.maxWidth = '560px';
+  openModal(
+    '<div class="modal-header"><div class="modal-title">New Invoice (Billing Cycle)</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-hint" style="margin-bottom:10px;">Manual entry — enter each component yourself. Automated generation from live rates/hours is a later phase.</div>' +
+      '<div class="form-row">' +
+        '<div class="form-group"><label class="form-label">Billing Month <span class="required">*</span></label><input class="form-input" id="f_acctBillingMonth" type="month" /></div>' +
+        '<div class="form-group"><label class="form-label">Service Month <span class="required">*</span> <span style="font-size:10.5px;font-weight:400;color:var(--text-muted);">(may differ from billing month)</span></label><input class="form-input" id="f_acctServiceMonth" type="month" /></div>' +
+      '</div>' +
+      '<div class="form-row">' +
+        '<div class="form-group"><label class="form-label">One-Time Fee ($)</label><input class="form-input" id="f_acctOneTimeFee" type="number" step="0.01" value="0" /></div>' +
+        '<div class="form-group"><label class="form-label">Service Payment ($)</label><input class="form-input" id="f_acctServicePayment" type="number" step="0.01" value="0" /></div>' +
+      '</div>' +
+      '<div class="form-row">' +
+        '<div class="form-group"><label class="form-label">Night Differential ($)</label><input class="form-input" id="f_acctNd" type="number" step="0.01" value="0" /></div>' +
+        '<div class="form-group"><label class="form-label">Rate Adjustment ($)</label><input class="form-input" id="f_acctRateAdj" type="number" step="0.01" value="0" /></div>' +
+      '</div>' +
+      '<div class="form-group"><label class="form-label">Prior Month Adjustment ($) <span style="font-size:10.5px;font-weight:400;color:var(--text-muted);">(+/-, from Hours Reconciliation)</span></label><input class="form-input" id="f_acctPriorAdj" type="number" step="0.01" value="0" /></div>' +
+      '<div class="form-group"><label class="form-label">Expected Payment Date <span style="font-size:10.5px;font-weight:400;color:var(--text-muted);">(defaults to the 10th)</span></label><input class="form-input" id="f_acctExpectedPay" type="date" /></div>' +
+      '<div id="acctInvoiceErr" style="color:var(--danger);font-size:12.5px;"></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="btn btn-primary" id="acctInvoiceBtn" onclick="_acctDoCreateInvoice()">Create Invoice</button></div>'
+  );
+}
+function _acctDoCreateInvoice() {
+  var billingMonth = (document.getElementById('f_acctBillingMonth')||{}).value;
+  var serviceMonth = (document.getElementById('f_acctServiceMonth')||{}).value;
+  var errEl = document.getElementById('acctInvoiceErr');
+  if (!billingMonth || !serviceMonth) { if (errEl) errEl.textContent = 'Billing Month and Service Month are required.'; return; }
+  var btn = document.getElementById('acctInvoiceBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { if (errEl) errEl.textContent = (res&&res.error)||'Failed.'; if (btn) { btn.disabled=false; btn.textContent='Create Invoice'; } return; }
+      showToast('Invoice created — total $' + _acctFmt(res.totalBilled) + '.', 'success');
+      closeModal();
+      _acctSelectCustomer(_acctSelectedCustomerId);
+    })
+    .withFailureHandler(function(err) { if (errEl) errEl.textContent = err.message; if (btn) { btn.disabled=false; btn.textContent='Create Invoice'; } })
+    .createBillingCycle({
+      customerId: _acctSelectedCustomerId,
+      billingMonth: billingMonth, serviceMonth: serviceMonth,
+      oneTimeFeeCharged: (document.getElementById('f_acctOneTimeFee')||{}).value || 0,
+      servicePaymentAmount: (document.getElementById('f_acctServicePayment')||{}).value || 0,
+      ndAmount: (document.getElementById('f_acctNd')||{}).value || 0,
+      rateAdjustmentAmount: (document.getElementById('f_acctRateAdj')||{}).value || 0,
+      priorMonthAdjustment: (document.getElementById('f_acctPriorAdj')||{}).value || 0,
+      expectedPaymentDate: (document.getElementById('f_acctExpectedPay')||{}).value || ''
+    });
+}
+
+// ── Record Payment (§5.3, §4.4) ─────────────────────────────────────
+function _acctOpenRecordPayment(billingId) {
+  openModal(
+    '<div class="modal-header"><div class="modal-title">Record Payment</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-group"><label class="form-label">Amount Paid ($) <span class="required">*</span></label><input class="form-input" id="f_acctPayAmount" type="number" step="0.01" /></div>' +
+      '<div class="form-group"><label class="form-label">Date Paid</label><input class="form-input" id="f_acctPayDate" type="date" value="'+_todayStr()+'" /></div>' +
+      '<div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="f_acctPayNotes" style="min-height:56px;"></textarea></div>' +
+      '<div class="form-hint">Late or partial payments only update this payment record — they never move hours or amounts into a different billing month.</div>' +
+      '<div id="acctPayErr" style="color:var(--danger);font-size:12.5px;margin-top:6px;"></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="btn btn-primary" id="acctPayBtn" data-bid="'+_esc(billingId)+'" onclick="_acctDoRecordPayment(this.dataset.bid)">Record Payment</button></div>'
+  );
+}
+function _acctDoRecordPayment(billingId) {
+  var amount = (document.getElementById('f_acctPayAmount')||{}).value;
+  var errEl = document.getElementById('acctPayErr');
+  if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) { if (errEl) errEl.textContent = 'A valid amount is required.'; return; }
+  var btn = document.getElementById('acctPayBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { if (errEl) errEl.textContent = (res&&res.error)||'Failed.'; if (btn) { btn.disabled=false; btn.textContent='Record Payment'; } return; }
+      showToast('Payment recorded — ' + res.paymentStatus + '. Outstanding: $' + _acctFmt(res.outstandingAfterPayment), 'success');
+      closeModal();
+      _acctSelectCustomer(_acctSelectedCustomerId);
+    })
+    .withFailureHandler(function(err) { if (errEl) errEl.textContent = err.message; if (btn) { btn.disabled=false; btn.textContent='Record Payment'; } })
+    .recordPayment({
+      billingId: billingId,
+      amountPaid: amount,
+      datePaid: (document.getElementById('f_acctPayDate')||{}).value || '',
+      notes: (document.getElementById('f_acctPayNotes')||{}).value || ''
+    });
+}
+
+// ── New Deposit / Apply Deposit (§2.5, §4.12) ───────────────────────
+function _acctOpenNewDeposit() {
+  var deptOpts = '<option value="">Select department…</option>' + (CMS.settings.Department||[]).map(function(d){ return '<option value="'+_esc(d.value)+'">'+_esc(d.label)+'</option>'; }).join('');
+  openModal(
+    '<div class="modal-header"><div class="modal-title">New Deposit</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-group"><label class="form-label">Department <span class="required">*</span></label><select class="form-select" id="f_acctDepDept">'+deptOpts+'</select></div>' +
+      '<div class="form-group"><label class="form-label">Deposit Fee ($) <span class="required">*</span></label><input class="form-input" id="f_acctDepAmount" type="number" step="0.01" /></div>' +
+      '<div class="form-group"><label class="form-label">Payment Date</label><input class="form-input" id="f_acctDepDate" type="date" value="'+_todayStr()+'" /></div>' +
+      '<div id="acctDepErr" style="color:var(--danger);font-size:12.5px;"></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="btn btn-primary" id="acctDepBtn" onclick="_acctDoCreateDeposit()">Save Deposit</button></div>'
+  );
+}
+function _acctDoCreateDeposit() {
+  var dept = (document.getElementById('f_acctDepDept')||{}).value;
+  var amount = (document.getElementById('f_acctDepAmount')||{}).value;
+  var errEl = document.getElementById('acctDepErr');
+  if (!dept) { if (errEl) errEl.textContent = 'Department is required.'; return; }
+  if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) { if (errEl) errEl.textContent = 'A valid amount is required.'; return; }
+  var btn = document.getElementById('acctDepBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { if (errEl) errEl.textContent = (res&&res.error)||'Failed.'; if (btn) { btn.disabled=false; btn.textContent='Save Deposit'; } return; }
+      showToast('Deposit recorded.', 'success');
+      closeModal();
+      _acctSelectCustomer(_acctSelectedCustomerId);
+    })
+    .withFailureHandler(function(err) { if (errEl) errEl.textContent = err.message; if (btn) { btn.disabled=false; btn.textContent='Save Deposit'; } })
+    .createDeposit({ customerId: _acctSelectedCustomerId, department: dept, depositFee: amount, paymentDate: (document.getElementById('f_acctDepDate')||{}).value || '' });
+}
+function _acctOpenApplyDeposit(depositId, remainingBalance) {
+  openModal(
+    '<div class="modal-header"><div class="modal-title">Apply Deposit</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-hint" style="margin-bottom:10px;">Remaining balance: $'+_acctFmt(remainingBalance)+'</div>' +
+      '<div class="form-group"><label class="form-label">Amount to Apply ($) <span class="required">*</span></label><input class="form-input" id="f_acctApplyAmount" type="number" step="0.01" max="'+remainingBalance+'" /></div>' +
+      '<div class="form-group"><label class="form-label">Reason <span class="required">*</span></label>' +
+        '<select class="form-select" id="f_acctApplyReason"><option value="Outstanding balance">Outstanding balance</option><option value="Final funding on exit">Final funding on exit</option></select></div>' +
+      '<div id="acctApplyErr" style="color:var(--danger);font-size:12.5px;"></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="btn btn-primary" id="acctApplyBtn" data-did="'+_esc(depositId)+'" onclick="_acctDoApplyDeposit(this.dataset.did)">Apply</button></div>'
+  );
+}
+function _acctDoApplyDeposit(depositId) {
+  var amount = (document.getElementById('f_acctApplyAmount')||{}).value;
+  var reason = (document.getElementById('f_acctApplyReason')||{}).value;
+  var errEl = document.getElementById('acctApplyErr');
+  if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) { if (errEl) errEl.textContent = 'A valid amount is required.'; return; }
+  var btn = document.getElementById('acctApplyBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Applying…'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { if (errEl) errEl.textContent = (res&&res.error)||'Failed.'; if (btn) { btn.disabled=false; btn.textContent='Apply'; } return; }
+      showToast('Deposit applied — remaining $' + _acctFmt(res.remainingBalance), 'success');
+      closeModal();
+      _acctSelectCustomer(_acctSelectedCustomerId);
+    })
+    .withFailureHandler(function(err) { if (errEl) errEl.textContent = err.message; if (btn) { btn.disabled=false; btn.textContent='Apply'; } })
+    .applyDeposit(depositId, amount, reason);
+}
+
+// ── New Enrollment (§2.3, §4.1 — One-Time Fee gating) ───────────────
+function _acctOpenNewEnrollment() {
+  var deptOpts = '<option value="">Select department…</option>' + (CMS.settings.Department||[]).map(function(d){ return '<option value="'+_esc(d.value)+'">'+_esc(d.label)+'</option>'; }).join('');
+  openModal(
+    '<div class="modal-header"><div class="modal-title">New Department Enrollment</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-group"><label class="form-label">Department <span class="required">*</span></label><select class="form-select" id="f_acctEnrollDept">'+deptOpts+'</select></div>' +
+      '<div class="form-group"><label class="form-label">Date First Activated</label><input class="form-input" id="f_acctEnrollDate" type="date" value="'+_todayStr()+'" /></div>' +
+      '<div class="form-group"><label class="form-label">One-Time Fee Amount ($)</label><input class="form-input" id="f_acctEnrollFee" type="number" step="0.01" value="250" /></div>' +
+      '<div class="form-group"><label class="form-label">Deposit Amount ($) <span style="font-size:10.5px;font-weight:400;color:var(--text-muted);">(charged alongside the fee for this new department)</span></label><input class="form-input" id="f_acctEnrollDeposit" type="number" step="0.01" value="250" /></div>' +
+      '<div class="form-group" style="background:var(--surface-2);padding:10px 12px;border-radius:8px;">' +
+        '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="f_acctEnrollWaived" onchange="_acctToggleWaiverReason()" style="width:15px;height:15px;" /> Waive or discount this fee</label>' +
+        '<div id="f_acctWaiverWrap" style="display:none;margin-top:8px;"><label class="form-label" style="font-size:11.5px;font-weight:400;">Reason</label><textarea class="form-textarea" id="f_acctEnrollWaiverReason" style="min-height:56px;"></textarea></div>' +
+      '</div>' +
+      '<div id="acctEnrollErr" style="color:var(--danger);font-size:12.5px;"></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="btn btn-primary" id="acctEnrollBtn" onclick="_acctDoCreateEnrollment()">Save Enrollment</button></div>'
+  );
+}
+function _acctToggleWaiverReason() {
+  var checked = (document.getElementById('f_acctEnrollWaived')||{}).checked;
+  var wrap = document.getElementById('f_acctWaiverWrap');
+  if (wrap) wrap.style.display = checked ? '' : 'none';
+}
+function _acctDoCreateEnrollment() {
+  var dept = (document.getElementById('f_acctEnrollDept')||{}).value;
+  var errEl = document.getElementById('acctEnrollErr');
+  if (!dept) { if (errEl) errEl.textContent = 'Department is required.'; return; }
+  var waived = (document.getElementById('f_acctEnrollWaived')||{}).checked;
+  var waiverReason = ((document.getElementById('f_acctEnrollWaiverReason')||{}).value||'').trim();
+  if (waived && !waiverReason) { if (errEl) errEl.textContent = 'A reason is required when waiving or discounting.'; return; }
+  var btn = document.getElementById('acctEnrollBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { if (errEl) errEl.textContent = (res&&res.error)||'Failed.'; if (btn) { btn.disabled=false; btn.textContent='Save Enrollment'; } return; }
+      showToast('Enrollment saved.', 'success');
+      closeModal();
+      _acctSelectCustomer(_acctSelectedCustomerId);
+    })
+    .withFailureHandler(function(err) { if (errEl) errEl.textContent = err.message; if (btn) { btn.disabled=false; btn.textContent='Save Enrollment'; } })
+    .createEnrollment({
+      customerId: _acctSelectedCustomerId, department: dept,
+      dateFirstActivated: (document.getElementById('f_acctEnrollDate')||{}).value || '',
+      oneTimeFeeAmount: (document.getElementById('f_acctEnrollFee')||{}).value || 250,
+      depositAmount: (document.getElementById('f_acctEnrollDeposit')||{}).value || 250,
+      waivedOrDiscounted: waived, waiverReason: waiverReason
+    });
+}
+
+// ── Reconciliation Review (§5.4) ────────────────────────────────────
+var _acctReconMonth = null;
+function _acctRenderReconciliationTab(container) {
+  var defaultMonth = (function(){ var d = new Date(); d.setMonth(d.getMonth()-1); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); })();
+  _acctReconMonth = _acctReconMonth || defaultMonth;
+  container.innerHTML =
+    '<div style="display:flex;align-items:flex-end;gap:12px;margin-bottom:16px;">' +
+      '<div class="form-group" style="margin-bottom:0;"><label class="form-label">Month</label><input class="form-input" id="acctReconMonthInput" type="month" value="'+_acctReconMonth+'" onchange="_acctReconMonthChanged(this.value)" /></div>' +
+      '<button class="btn btn-primary btn-sm" onclick="_acctOpenAddReconEntry()">+ Add Entry</button>' +
+    '</div>' +
+    '<div id="acctReconListWrap">' + _loadingHtml('Loading reconciliation entries…', '160px') + '</div>';
+  _acctLoadReconciliationList();
+}
+function _acctReconMonthChanged(month) { _acctReconMonth = month; _acctLoadReconciliationList(); }
+function _acctLoadReconciliationList() {
+  var wrap = document.getElementById('acctReconListWrap'); if (!wrap) return;
+  wrap.innerHTML = _loadingHtml('Loading reconciliation entries…', '160px');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { wrap.innerHTML = '<div class="empty-state"><h3>Error</h3><p>'+_esc((res&&res.error)||'Something went wrong loading this data.')+'</p></div>'; return; }
+      _acctRenderReconList(wrap, res.data);
+    })
+    .withFailureHandler(function(err) { wrap.innerHTML = '<div class="empty-state"><h3>Error</h3><p>'+_esc(err.message)+'</p></div>'; })
+    .getReconciliationsForMonth(_acctReconMonth, '');
+}
+function _acctRenderReconList(wrap, rows) {
+  var statusBadge = { Pending: 'badge-returning', Confirmed: 'badge-active', Applied: 'badge-inactive' };
+  wrap.innerHTML = '<div class="table-wrap"><table>' +
+    '<thead><tr><th>VA</th><th>Projected Hrs</th><th>Actual Hrs</th><th>Difference</th><th>$ Impact</th><th>Status</th><th></th></tr></thead>' +
+    '<tbody>' + (rows.length ? rows.map(function(r) {
+      return '<tr>' +
+        '<td>'+_esc(r.vaName)+'</td>' +
+        '<td>'+_acctFmt(r.projectedHours)+'</td>' +
+        '<td>'+_acctFmt(r.actualHours)+'</td>' +
+        '<td style="color:'+(r.differenceHours<0?'#dc2626':'#15803d')+';font-weight:600;">'+(r.differenceHours>=0?'+':'')+_acctFmt(r.differenceHours)+'</td>' +
+        '<td style="color:'+(r.differenceValue<0?'#dc2626':'#15803d')+';font-weight:600;">'+(r.differenceValue>=0?'+':'-')+'$'+_acctFmt(Math.abs(r.differenceValue))+'</td>' +
+        '<td><span class="badge '+(statusBadge[r.status]||'badge-role')+'">'+_esc(r.status)+'</span>'+(r.appliedToBillingId?' <span class="muted" style="font-size:10.5px;">('+_esc(r.appliedToBillingId)+')</span>':'')+'</td>' +
+        '<td>' + (r.status === 'Pending' ? '<button class="btn btn-secondary btn-sm" data-rid="'+_esc(r.reconId)+'" onclick="_acctConfirmRecon(this.dataset.rid)">Confirm</button>' : '') + '</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="7" class="muted" style="text-align:center;padding:16px;">No reconciliation entries for this month yet.</td></tr>') +
+    '</tbody></table></div>';
+}
+function _acctConfirmRecon(reconId) {
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { showToast((res&&res.error)||'Failed.', 'error'); return; }
+      showToast('Confirmed — will apply to next month\'s invoice when generated.', 'success');
+      _acctLoadReconciliationList();
+    })
+    .withFailureHandler(function(err) { showToast(err.message, 'error'); })
+    .confirmReconciliation(reconId);
+}
+
+// ── Add Reconciliation Entry ─────────────────────────────────────────
+function _acctOpenAddReconEntry() {
+  openModal(_loadingModal('160px', 'Loading customers…'));
+  google.script.run
+    .withSuccessHandler(function(res) {
+      var list = (res && (res.data || res)) || [];
+      var custOpts = '<option value="">Select customer…</option>' + list.slice().sort(function(a,b){return (a.customerName||'').localeCompare(b.customerName||'');})
+        .map(function(c){ return '<option value="'+_esc(c.customerId)+'">'+_esc(c.customerName)+'</option>'; }).join('');
+      openModal(
+        '<div class="modal-header"><div class="modal-title">Add Reconciliation Entry</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+        '<div class="modal-body">' +
+          '<div class="form-group"><label class="form-label">Customer <span class="required">*</span></label><select class="form-select" id="f_acctReconCust" onchange="_acctReconLoadConnections(this.value)">'+custOpts+'</select></div>' +
+          '<div class="form-group"><label class="form-label">VA Connection <span class="required">*</span></label><select class="form-select" id="f_acctReconConn"><option value="">Select customer first…</option></select></div>' +
+          '<div class="form-group"><label class="form-label">Actual Hours <span class="required">*</span></label><input class="form-input" id="f_acctReconActual" type="number" step="0.1" /></div>' +
+          '<div class="form-hint">Projected hours and the dollar difference are computed automatically from the connection\'s weekly schedule and effective rate.</div>' +
+          '<div id="acctReconAddErr" style="color:var(--danger);font-size:12.5px;margin-top:6px;"></div>' +
+        '</div>' +
+        '<div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+          '<button class="btn btn-primary" id="acctReconAddBtn" onclick="_acctDoAddReconEntry()">Save</button></div>'
+      );
+    })
+    .withFailureHandler(function(err) { closeModal(); showToast(err.message, 'error'); })
+    .getCustomers({});
+}
+function _acctReconLoadConnections(customerId) {
+  var sel = document.getElementById('f_acctReconConn'); if (!sel) return;
+  if (!customerId) { sel.innerHTML = '<option value="">Select customer first…</option>'; return; }
+  sel.innerHTML = '<option value="">Loading…</option>';
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success || !res.data.length) { sel.innerHTML = '<option value="">No active VA connections for this customer</option>'; return; }
+      sel.innerHTML = '<option value="">Select…</option>' + res.data.map(function(c){ return '<option value="'+_esc(c.connectionId)+'">'+_esc(c.vaName)+'</option>'; }).join('');
+    })
+    .withFailureHandler(function(err) { sel.innerHTML = '<option value="">Error loading</option>'; })
+    .getActiveConnectionsForCustomer(customerId);
+}
+function _acctDoAddReconEntry() {
+  var connId = (document.getElementById('f_acctReconConn')||{}).value;
+  var actualHours = (document.getElementById('f_acctReconActual')||{}).value;
+  var errEl = document.getElementById('acctReconAddErr');
+  if (!connId) { if (errEl) errEl.textContent = 'Select a VA connection.'; return; }
+  if (actualHours === '' || isNaN(Number(actualHours)) || Number(actualHours) < 0) { if (errEl) errEl.textContent = 'A valid actual hours value is required.'; return; }
+  var btn = document.getElementById('acctReconAddBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { if (errEl) errEl.textContent = (res&&res.error)||'Failed.'; if (btn) { btn.disabled=false; btn.textContent='Save'; } return; }
+      showToast('Reconciliation entry saved.', 'success');
+      closeModal();
+      _acctLoadReconciliationList();
+    })
+    .withFailureHandler(function(err) { if (errEl) errEl.textContent = err.message; if (btn) { btn.disabled=false; btn.textContent='Save'; } })
+    .createReconciliationEntry(connId, _acctReconMonth, actualHours);
+}
+
+// ── Training Bond (§4.8) ─────────────────────────────────────────────
+function _acctRenderBondTab(container) {
+  container.innerHTML = _loadingHtml('Loading training bond data…', '160px');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { container.innerHTML = '<div class="empty-state"><h3>Error</h3><p>'+_esc((res&&res.error)||'Something went wrong loading this data.')+'</p></div>'; return; }
+      _acctRenderBondContent(container, res.data);
+    })
+    .withFailureHandler(function(err) { container.innerHTML = '<div class="empty-state"><h3>Error</h3><p>'+_esc(err.message)+'</p></div>'; })
+    .getBondsDueForDecision();
+}
+function _acctRenderBondContent(container, dueList) {
+  var dueHtml = dueList.length
+    ? '<div class="section-card" style="margin-bottom:16px;border-color:#f59e0b;">' +
+        '<div class="section-title" style="margin-bottom:10px;">⚠ Due for Decision (6 months reached)</div>' +
+        '<div class="table-wrap"><table>' +
+          '<thead><tr><th>VA</th><th>Expected End</th><th>Amount ($/hr)</th><th></th></tr></thead>' +
+          '<tbody>' + dueList.map(function(b) {
+            return '<tr><td>'+_esc(b.vaName)+'</td><td>'+_fdate(b.expectedEndDate)+'</td><td>$'+_acctFmt(b.amount)+'</td>' +
+              '<td><button class="btn btn-primary btn-sm" data-cid="'+_esc(b.connectionId)+'" data-vn="'+_esc(b.vaName)+'" onclick="_acctOpenBondDecision(this.dataset.cid,this.dataset.vn)">Decide</button></td></tr>';
+          }).join('') +
+          '</tbody></table></div>' +
+      '</div>'
+    : '<div class="form-hint" style="margin-bottom:16px;">No bonds currently due for a decision.</div>';
+
+  container.innerHTML = dueHtml +
+    '<div class="section-card">' +
+      '<div class="section-header"><div class="section-title">Accrue Monthly Hours</div>' +
+        '<button class="btn btn-secondary btn-sm" onclick="_acctOpenAccrueBond()">+ Accrue Entry</button>' +
+      '</div>' +
+      '<div class="form-hint" style="margin-bottom:10px;">Accrues $0.50/hr (or the bond\'s own configured rate) against a VA\'s running total. Stops automatically once that bond is Released or Forfeited.</div>' +
+      '<div class="form-group" style="max-width:360px;"><label class="form-label">View ledger for VA Connection</label>' +
+        '<input class="form-input" id="f_acctBondViewConn" placeholder="Paste Connection ID…" /></div>' +
+      '<button class="btn btn-secondary btn-sm" onclick="_acctLoadBondLedger()">View Ledger</button>' +
+      '<div id="acctBondLedgerWrap" style="margin-top:14px;"></div>' +
+    '</div>';
+}
+function _acctLoadBondLedger() {
+  var connId = (document.getElementById('f_acctBondViewConn')||{}).value.trim();
+  var wrap = document.getElementById('acctBondLedgerWrap'); if (!wrap) return;
+  if (!connId) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = _loadingHtml('Loading ledger…', '100px');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { wrap.innerHTML = '<div class="empty-state"><h3>Error</h3><p>'+_esc((res&&res.error)||'Something went wrong loading this data.')+'</p></div>'; return; }
+      wrap.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Month</th><th>Hours</th><th>Deducted</th><th>Running Total</th></tr></thead><tbody>' +
+        (res.data.length ? res.data.map(function(l){ return '<tr><td>'+_esc(l.month)+'</td><td>'+_acctFmt(l.hoursWorked)+'</td><td>$'+_acctFmt(l.amountDeducted)+'</td><td style="font-weight:700;">$'+_acctFmt(l.runningTotal)+'</td></tr>'; }).join('')
+          : '<tr><td colspan="4" class="muted" style="text-align:center;padding:16px;">No accrual entries yet.</td></tr>') +
+        '</tbody></table></div>';
+    })
+    .withFailureHandler(function(err) { wrap.innerHTML = '<div class="empty-state"><h3>Error</h3><p>'+_esc(err.message)+'</p></div>'; })
+    .getTrainingBondLedger(connId);
+}
+function _acctOpenAccrueBond() {
+  openModal(
+    '<div class="modal-header"><div class="modal-title">Accrue Training Bond</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-group"><label class="form-label">VA Connection ID <span class="required">*</span></label><input class="form-input" id="f_acctAccrueConn" placeholder="Paste Connection ID…" /></div>' +
+      '<div class="form-group"><label class="form-label">Month <span class="required">*</span></label><input class="form-input" id="f_acctAccrueMonth" type="month" /></div>' +
+      '<div class="form-group"><label class="form-label">Hours Worked <span class="required">*</span></label><input class="form-input" id="f_acctAccrueHours" type="number" step="0.1" /></div>' +
+      '<div id="acctAccrueErr" style="color:var(--danger);font-size:12.5px;"></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="btn btn-primary" id="acctAccrueBtn" onclick="_acctDoAccrueBond()">Save</button></div>'
+  );
+}
+function _acctDoAccrueBond() {
+  var connId = (document.getElementById('f_acctAccrueConn')||{}).value.trim();
+  var month = (document.getElementById('f_acctAccrueMonth')||{}).value;
+  var hours = (document.getElementById('f_acctAccrueHours')||{}).value;
+  var errEl = document.getElementById('acctAccrueErr');
+  if (!connId || !month) { if (errEl) errEl.textContent = 'Connection ID and Month are required.'; return; }
+  if (hours === '' || isNaN(Number(hours)) || Number(hours) < 0) { if (errEl) errEl.textContent = 'A valid hours value is required.'; return; }
+  var btn = document.getElementById('acctAccrueBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { if (errEl) errEl.textContent = (res&&res.error)||'Failed.'; if (btn) { btn.disabled=false; btn.textContent='Save'; } return; }
+      showToast('Accrued — running total $' + _acctFmt(res.runningTotal), 'success');
+      closeModal();
+    })
+    .withFailureHandler(function(err) { if (errEl) errEl.textContent = err.message; if (btn) { btn.disabled=false; btn.textContent='Save'; } })
+    .accrueTrainingBond(connId, month, hours);
+}
+function _acctOpenBondDecision(connectionId, vaName) {
+  openModal(
+    '<div class="modal-header"><div class="modal-title">Bond Decision — '+_esc(vaName)+'</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-group"><label class="form-label">Decision <span class="required">*</span></label>' +
+        '<select class="form-select" id="f_acctBondDecision" onchange="_acctToggleForfeitReason()">' +
+          '<option value="Released">Release — pay out running total to VA</option>' +
+          '<option value="Forfeited">Forfeit — mark as company income</option>' +
+        '</select></div>' +
+      '<div class="form-group" id="f_acctForfeitWrap" style="display:none;"><label class="form-label">Reason <span class="required">*</span></label><textarea class="form-textarea" id="f_acctForfeitReason" style="min-height:60px;"></textarea></div>' +
+      '<div id="acctBondDecideErr" style="color:var(--danger);font-size:12.5px;"></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="btn btn-primary" id="acctBondDecideBtn" data-cid="'+_esc(connectionId)+'" onclick="_acctDoBondDecision(this.dataset.cid)">Confirm</button></div>'
+  );
+}
+function _acctToggleForfeitReason() {
+  var decision = (document.getElementById('f_acctBondDecision')||{}).value;
+  var wrap = document.getElementById('f_acctForfeitWrap');
+  if (wrap) wrap.style.display = decision === 'Forfeited' ? '' : 'none';
+}
+function _acctDoBondDecision(connectionId) {
+  var decision = (document.getElementById('f_acctBondDecision')||{}).value;
+  var reason = ((document.getElementById('f_acctForfeitReason')||{}).value||'').trim();
+  var errEl = document.getElementById('acctBondDecideErr');
+  if (decision === 'Forfeited' && !reason) { if (errEl) errEl.textContent = 'A reason is required when forfeiting.'; return; }
+  var btn = document.getElementById('acctBondDecideBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { if (errEl) errEl.textContent = (res&&res.error)||'Failed.'; if (btn) { btn.disabled=false; btn.textContent='Confirm'; } return; }
+      showToast(decision + ' — total $' + _acctFmt(res.runningTotal), 'success');
+      closeModal();
+      _acctRenderBondTab(document.getElementById('acctTopTabBody'));
+    })
+    .withFailureHandler(function(err) { if (errEl) errEl.textContent = err.message; if (btn) { btn.disabled=false; btn.textContent='Confirm'; } })
+    .decideTrainingBond(connectionId, decision, reason);
+}
+
+// ── Fees & Deposits Overview ─────────────────────────────────────────
+var _acctFeesData = [];
+var _acctFeesSortCol = 'customerName';
+var _acctFeesSortDir = 'asc';
+var _acctFeesSearch = '';
+
+function _acctRenderFeesTab(container, isRetry) {
+  container.innerHTML = _loadingHtml('Loading fees & deposits overview…', '200px');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) {
+        // First attempt failing but a retry succeeding is a known pattern
+        // for this kind of multi-sheet-read call on a cold Apps Script
+        // execution — retry once automatically before showing an error,
+        // rather than making the user click again themselves.
+        if (!isRetry) { _acctRenderFeesTab(container, true); return; }
+        container.innerHTML = '<div class="empty-state"><h3>Error</h3><p>'+_esc((res&&res.error)||'Something went wrong loading this data.')+'</p></div>';
+        return;
+      }
+      _acctFeesData = res.data;
+      _acctFeesSortCol = 'customerName'; _acctFeesSortDir = 'asc'; _acctFeesSearch = '';
+      _acctRenderFeesShell(container);
+    })
+    .withFailureHandler(function(err) {
+      if (!isRetry) { _acctRenderFeesTab(container, true); return; }
+      container.innerHTML = '<div class="empty-state"><h3>Error</h3><p>'+_esc(err.message)+'</p></div>';
+    })
+    .getFeesAndDepositsOverview();
+}
+
+// The shell (search bar + table) is rendered once; sorting/searching
+// afterward only re-renders the table body, not the whole page.
+function _acctRenderFeesShell(container) {
+  container.innerHTML =
+    '<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap;">' +
+      '<div class="form-group" style="max-width:360px;margin-bottom:0;">' +
+        '<input class="form-input" id="f_acctFeesSearch" type="text" placeholder="Search by customer or department…" value="'+_esc(_acctFeesSearch)+'" oninput="_acctFeesSearchChanged(this.value)" />' +
+      '</div>' +
+      '<button class="btn btn-primary btn-sm" onclick="_acctOpenAddFeeEntry()">+ Add Entry</button>' +
+    '</div>' +
+    '<div id="acctFeesTableWrap"></div>';
+  _acctRenderFeesTable();
+}
+function _acctFeesSearchChanged(val) {
+  _acctFeesSearch = val;
+  _acctRenderFeesTable();
+}
+function _acctFeesSortBy(col) {
+  if (_acctFeesSortCol === col) {
+    _acctFeesSortDir = _acctFeesSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _acctFeesSortCol = col;
+    _acctFeesSortDir = 'asc';
+  }
+  _acctRenderFeesTable();
+}
+function _acctFeesSortArrow(col) {
+  if (_acctFeesSortCol !== col) return '';
+  return _acctFeesSortDir === 'asc' ? ' ▲' : ' ▼';
+}
+function _acctRenderFeesTable() {
+  var wrap = document.getElementById('acctFeesTableWrap'); if (!wrap) return;
+  var statusBadge = { Active: 'badge-active', Waived: 'badge-inactive', Refunded: 'badge-inactive', Consumed: 'badge-role' };
+
+  var searchLower = _acctFeesSearch.trim().toLowerCase();
+  var filtered = _acctFeesData.filter(function(r) {
+    if (!searchLower) return true;
+    return (r.customerName||'').toLowerCase().indexOf(searchLower) !== -1 ||
+           (r.department||'').toLowerCase().indexOf(searchLower) !== -1;
+  });
+
+  var col = _acctFeesSortCol, dir = _acctFeesSortDir;
+  filtered.sort(function(a, b) {
+    var av = a[col], bv = b[col];
+    // Dates and numbers compare naturally as-is; everything else as text.
+    if (col.indexOf('Date') !== -1) { av = av ? new Date(av).getTime() : 0; bv = bv ? new Date(bv).getTime() : 0; }
+    else if (col === 'oneTimeFeeAmount' || col === 'depositAmount') { av = Number(av)||0; bv = Number(bv)||0; }
+    else { av = String(av||'').toLowerCase(); bv = String(bv||'').toLowerCase(); }
+    if (av < bv) return dir === 'asc' ? -1 : 1;
+    if (av > bv) return dir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  function th(label, sortKey, colspan) {
+    return '<th'+(colspan?' colspan="'+colspan+'"':'')+' style="cursor:pointer;white-space:nowrap;" onclick="_acctFeesSortBy(\''+sortKey+'\')">'+_esc(label)+_acctFeesSortArrow(sortKey)+'</th>';
+  }
+
+  wrap.innerHTML =
+    '<div class="table-wrap" style="width:100%;"><table style="width:100%;">' +
+      '<thead>' +
+        '<tr>' +
+          '<th rowspan="2" style="cursor:pointer;white-space:nowrap;vertical-align:bottom;" onclick="_acctFeesSortBy(\'customerName\')">Customer'+_acctFeesSortArrow('customerName')+'</th>' +
+          '<th rowspan="2" style="cursor:pointer;white-space:nowrap;vertical-align:bottom;" onclick="_acctFeesSortBy(\'department\')">Department'+_acctFeesSortArrow('department')+'</th>' +
+          '<th colspan="5" style="text-align:center;background:var(--surface-2);">One-Time Fee</th>' +
+          '<th colspan="5" style="text-align:center;background:#eef2ff;border-left:3px solid var(--accent);">Deposit</th>' +
+        '</tr>' +
+        '<tr>' +
+          th('Amount', 'oneTimeFeeAmount') + th('Status', 'oneTimeFeeWaived') + th('Billing Date', 'oneTimeFeeBillingDate') + th('Payment Date', 'oneTimeFeePaymentDate') + th('Reason', 'oneTimeFeeReason') +
+          '<th style="cursor:pointer;white-space:nowrap;border-left:3px solid var(--accent);" onclick="_acctFeesSortBy(\'depositAmount\')">Amount'+_acctFeesSortArrow('depositAmount')+'</th>' +
+          th('Status', 'depositStatus') + th('Billing Date', 'depositBillingDate') + th('Payment Date', 'depositPaymentDate') + th('Reason', 'depositReason') +
+        '</tr>' +
+      '</thead>' +
+      '<tbody>' + (filtered.length ? filtered.map(function(r) {
+        var otfStatus = r.oneTimeFeeWaived ? 'Waived/Discounted' : (r.oneTimeFeeCharged ? 'Charged' : '—');
+        return '<tr>' +
+          '<td><a href="#" data-cid="'+_esc(r.customerId)+'" onclick="custOpenModal(this.dataset.cid);return false;" style="color:var(--accent);font-weight:600;">'+_esc(r.customerName)+'</a></td>' +
+          '<td>'+_esc(r.department||'—')+'</td>' +
+          '<td>$'+_acctFmt(r.oneTimeFeeAmount)+'</td>' +
+          '<td><span class="badge '+(r.oneTimeFeeWaived?'badge-inactive':'badge-active')+'">'+_esc(otfStatus)+'</span></td>' +
+          '<td>'+_fdate(r.oneTimeFeeBillingDate)+'</td>' +
+          '<td>'+(r.oneTimeFeePaymentDate?_fdate(r.oneTimeFeePaymentDate):'<span class="muted">—</span>')+'</td>' +
+          '<td style="font-size:12px;color:var(--text-muted);max-width:180px;">'+_esc(r.oneTimeFeeReason||'—')+'</td>' +
+          '<td style="border-left:3px solid var(--accent);">'+(r.depositAmount!==''?'$'+_acctFmt(r.depositAmount):'<span class="muted">—</span>')+'</td>' +
+          '<td>'+(r.depositStatus?'<span class="badge '+(statusBadge[r.depositStatus]||'badge-role')+'">'+_esc(r.depositStatus)+'</span>':'<span class="muted">—</span>')+'</td>' +
+          '<td>'+(r.depositBillingDate?_fdate(r.depositBillingDate):'<span class="muted">—</span>')+'</td>' +
+          '<td>'+(r.depositPaymentDate?_fdate(r.depositPaymentDate):'<span class="muted">—</span>')+'</td>' +
+          '<td style="font-size:12px;color:var(--text-muted);max-width:180px;">'+_esc(r.depositReason||'—')+'</td>' +
+        '</tr>';
+      }).join('') : '<tr><td colspan="12" class="muted" style="text-align:center;padding:16px;">No matching enrollments.</td></tr>') +
+      '</tbody>' +
+    '</table></div>';
+}
+
+// ── Billing Grid (direct-entry, connection-level, per month) ─────────
+var _acctGridMonth = null;
+var _acctGridData = [];
+
+function _acctRenderGridTab(container) {
+  _acctGridMonth = _acctGridMonth || (function(){ var d = new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); })();
+  container.innerHTML =
+    '<div style="display:flex;align-items:flex-end;gap:12px;margin-bottom:12px;">' +
+      '<div class="form-group" style="margin-bottom:0;"><label class="form-label">Month</label><input class="form-input" id="acctGridMonthInput" type="month" value="'+_acctGridMonth+'" onchange="_acctGridMonthChanged(this.value)" /></div>' +
+      '<button class="btn btn-primary btn-sm" id="acctGridSaveBtn" onclick="_acctSaveGrid()">Save All</button>' +
+      '<button class="btn btn-secondary btn-sm" onclick="_acctOpenBillingImport()">⭱ Import Billing</button>' +
+      '<button class="btn btn-secondary btn-sm" onclick="_acctCleanUpBillingDuplicates()">🧹 Clean Up Duplicates</button>' +
+      '<div class="form-hint" style="margin-bottom:0;">Reference columns (Customer, VA, dates, billing type, rate) are read-only — pulled live from existing records.</div>' +
+    '</div>' +
+    '<div id="acctGridWrap">' + _loadingHtml('Loading billing grid…', '200px') + '</div>';
+  _acctLoadGrid();
+}
+function _acctGridMonthChanged(month) { _acctGridMonth = month; _acctLoadGrid(); }
+function _acctLoadGrid() {
+  var wrap = document.getElementById('acctGridWrap'); if (!wrap) return;
+  wrap.innerHTML = _loadingHtml('Loading billing grid…', '200px');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { wrap.innerHTML = '<div class="empty-state"><h3>Error</h3><p>'+_esc((res&&res.error)||'Something went wrong loading this grid.')+'</p></div>'; return; }
+      _acctGridData = res.data;
+      _acctRenderGridTable(wrap);
+    })
+    .withFailureHandler(function(err) { wrap.innerHTML = '<div class="empty-state"><h3>Error</h3><p>'+_esc(err.message)+'</p></div>'; })
+    .getConnectionBillingGrid(_acctGridMonth);
+}
+
+// Computes the live derived values for one row — Night Differential
+// amount, base Service Payment (Prepaid uses projected hours, Postpaid
+// uses actual — same branch as the automated Invoice Generator),
+// Additions, Deductions, and Total Billed. Never written to the sheet
+// directly; recomputed fresh every render/keystroke from the row's own
+// editable fields, so these can never drift from what they're computed from.
+function _acctGridCompute(r) {
+  var ndAmount = r.nightDiffFactorType === 'Amount'
+    ? (Number(r.nightDiffHours)||0) * (Number(r.nightDiffFactorValue)||0)
+    : (Number(r.nightDiffHours)||0) * (Number(r.rate)||0) * ((Number(r.nightDiffFactorValue)||0) / 100);
+  var baseHours = r.billingType === 'Postpaid' ? (Number(r.actualHours)||0) : (Number(r.projectedHours)||0);
+  var baseServicePayment = baseHours * (Number(r.rate)||0);
+  var totalBilledServiceAmount = (Number(r.rate)||0) * (Number(r.projectedHours)||0);
+  var additions = ndAmount + (Number(r.overtimeAmount)||0);
+  var deductions = (Number(r.absencesAmount)||0) + (Number(r.refundsAmount)||0);
+  var totalBilled = baseServicePayment + additions - deductions;
+  return { ndAmount: ndAmount, baseServicePayment: baseServicePayment, totalBilledServiceAmount: totalBilledServiceAmount, additions: additions, deductions: deductions, totalBilled: totalBilled };
+}
+
+function _acctRenderGridTable(wrap) {
+  var rows = _acctGridData;
+  var editableNum = function(connId, field, val, width) {
+    return '<input type="number" step="0.01" class="acct-grid-input" data-connid="'+_esc(connId)+'" data-field="'+field+'" value="'+(val||0)+'" style="width:'+(width||70)+'px;padding:4px 6px;font-size:12px;border:1px solid var(--border);border-radius:4px;" oninput="_acctGridCellChanged(this)" />';
+  };
+  var editableDate = function(connId, field, val) {
+    var dv = val ? String(val).substring(0,10) : '';
+    return '<input type="date" class="acct-grid-input" data-connid="'+_esc(connId)+'" data-field="'+field+'" value="'+dv+'" style="width:120px;padding:4px 6px;font-size:12px;border:1px solid var(--border);border-radius:4px;" oninput="_acctGridCellChanged(this)" />';
+  };
+
+  wrap.innerHTML = '<div class="table-wrap" style="width:100%;"><table style="width:100%;font-size:12.5px;">' +
+    '<thead><tr>' +
+      '<th>Customer</th><th>VA</th><th>Start Date</th><th>End Date</th><th>Billing Type</th><th>Rate</th><th>Total Billed Service</th>' +
+      '<th>Billing Date</th><th>Payment Date</th><th>Projected Hrs</th><th>Actual Hrs</th>' +
+      '<th>ND Hrs</th><th>ND Factor</th><th>ND Amount</th>' +
+      '<th>Overtime</th><th>Absences</th><th>Refunds</th>' +
+      '<th>Additions</th><th>Deductions</th><th>Total Billed</th>' +
+    '</tr></thead>' +
+    '<tbody>' + (rows.length ? rows.map(function(r) {
+      var c = _acctGridCompute(r);
+      var connId = r.connectionId;
+      return '<tr data-connrow="'+_esc(connId)+'">' +
+        '<td>'+_esc(r.customerName)+'</td><td>'+_esc(r.vaName)+'</td>' +
+        '<td class="muted">'+(r.startDate?_fdate(r.startDate):'—')+'</td>' +
+        '<td class="muted">'+(r.endDate?_fdate(r.endDate):'—')+'</td>' +
+        '<td class="muted">'+_esc(r.billingType)+'</td>' +
+        '<td class="muted">$'+_acctFmt(r.rate)+'</td>' +
+        '<td class="acct-grid-computed" data-connid="'+_esc(connId)+'" data-computed="totalBilledServiceAmount" style="font-weight:600;">$'+_acctFmt(c.totalBilledServiceAmount)+'</td>' +
+        '<td>'+editableDate(connId,'billingDate',r.billingDate)+'</td>' +
+        '<td>'+editableDate(connId,'paymentDate',r.paymentDate)+'</td>' +
+        '<td>'+editableNum(connId,'projectedHours',r.projectedHours,55)+'</td>' +
+        '<td>'+editableNum(connId,'actualHours',r.actualHours,55)+'</td>' +
+        '<td>'+editableNum(connId,'nightDiffHours',r.nightDiffHours,55)+'</td>' +
+        '<td>' +
+          '<select class="acct-grid-input" data-connid="'+_esc(connId)+'" data-field="nightDiffFactorType" style="font-size:11px;padding:3px;" onchange="_acctGridCellChanged(this)">' +
+            '<option value="Percent"'+(r.nightDiffFactorType==='Percent'?' selected':'')+'>%</option>' +
+            '<option value="Amount"'+(r.nightDiffFactorType==='Amount'?' selected':'')+'>$</option>' +
+          '</select> ' + editableNum(connId,'nightDiffFactorValue',r.nightDiffFactorValue,50) +
+        '</td>' +
+        '<td class="acct-grid-computed" data-connid="'+_esc(connId)+'" data-computed="ndAmount">$'+_acctFmt(c.ndAmount)+'</td>' +
+        '<td>'+editableNum(connId,'overtimeAmount',r.overtimeAmount,60)+'</td>' +
+        '<td>'+editableNum(connId,'absencesAmount',r.absencesAmount,60)+'</td>' +
+        '<td>'+editableNum(connId,'refundsAmount',r.refundsAmount,60)+'</td>' +
+        '<td class="acct-grid-computed" data-connid="'+_esc(connId)+'" data-computed="additions" style="font-weight:600;color:#15803d;">$'+_acctFmt(c.additions)+'</td>' +
+        '<td class="acct-grid-computed" data-connid="'+_esc(connId)+'" data-computed="deductions" style="font-weight:600;color:#dc2626;">$'+_acctFmt(c.deductions)+'</td>' +
+        '<td class="acct-grid-computed" data-connid="'+_esc(connId)+'" data-computed="totalBilled" style="font-weight:700;">$'+_acctFmt(c.totalBilled)+'</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="20" class="muted" style="text-align:center;padding:16px;">No active VA connections.</td></tr>') +
+    '</tbody></table></div>';
+}
+
+// Recomputes just this row's derived cells on every keystroke, without
+// re-rendering the whole table (which would lose focus/cursor position
+// on every character typed).
+function _acctGridCellChanged(input) {
+  var connId = input.dataset.connid;
+  var field = input.dataset.field;
+  var row = _acctGridData.find(function(r){ return r.connectionId === connId; });
+  if (!row) return;
+  row[field] = input.value;
+
+  var c = _acctGridCompute(row);
+  document.querySelectorAll('.acct-grid-computed[data-connid="'+connId+'"]').forEach(function(cell) {
+    var key = cell.dataset.computed;
+    var val = key === 'ndAmount' ? c.ndAmount : key === 'additions' ? c.additions : key === 'deductions' ? c.deductions : key === 'totalBilledServiceAmount' ? c.totalBilledServiceAmount : c.totalBilled;
+    cell.textContent = '$' + _acctFmt(val);
+  });
+}
+
+function _acctSaveGrid() {
+  var btn = document.getElementById('acctGridSaveBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { showToast((res&&res.error)||'Failed.', 'error'); if (btn) { btn.disabled=false; btn.textContent='Save All'; } return; }
+      showToast('Saved ' + res.saved + ' row(s).', 'success');
+      if (btn) { btn.disabled=false; btn.textContent='Save All'; }
+    })
+    .withFailureHandler(function(err) { showToast(err.message, 'error'); if (btn) { btn.disabled=false; btn.textContent='Save All'; } })
+    .saveConnectionBillingGrid(_acctGridMonth, _acctGridData);
+}
+
+// ── Billing Import (§ new request) ─────────────────────────────────────
+var ATT_BILLED_STATUSES_ACCT = ['Not Billed', 'Billed'];
+var ATT_PAYMENT_STATUSES_ACCT = ['Not Yet Paid', 'Paid', 'Late'];
+var _acctBillingImportHeaders = ['ConnectionID','VAName','CustomerName','AccountName','Status','BillingMonthYear','BillingDate','BilledStatus','PaymentStatus','PaymentDate'];
+var _acctBillingImportRows = [];
+
+function _acctCleanUpBillingDuplicates() {
+  if (!confirm('This will remove duplicate billing records for the same VA connection and month, keeping only the most recently updated one for each. Continue?')) return;
+  showToast('Cleaning up…', 'info');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { showToast((res&&res.error)||'Failed.', 'error'); return; }
+      showToast('Removed ' + res.removed + ' duplicate row(s) — ' + res.remaining + ' unique record(s) remain.', 'success');
+      if (typeof _acctLoadGrid === 'function') _acctLoadGrid();
+    })
+    .withFailureHandler(function(err) { showToast(err.message, 'error'); })
+    .dedupeConnectionBillingDetailRows();
+}
+function _acctOpenBillingImport() {
+  document.getElementById('modalBox').style.maxWidth = '620px';
+  openModal(
+    '<div class="modal-header"><div class="modal-title">Import Billing</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-hint" style="margin-bottom:14px;">Import Billing Month/Year, Billing Date, Billed/Payment Status, and Payment Date for any VA connection — other billing details can be imported separately later. Start from the downloadable template below.</div>' +
+      '<button class="btn btn-secondary btn-sm" style="margin-bottom:16px;" onclick="_acctDownloadBillingTemplate()">⭳ Download Template</button>' +
+      '<div class="form-group"><label class="form-label">CSV File <span class="required">*</span></label>' +
+        '<input class="form-input" id="f_acctBillingImportFile" type="file" accept=".csv" onchange="_acctBillingImportFileChosen(this)" />' +
+      '</div>' +
+      '<div id="acctBillingImportPreviewWrap"></div>' +
+      '<div id="acctBillingImportErr" style="color:var(--danger);font-size:12.5px;margin-top:8px;"></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="btn btn-primary" id="acctBillingImportCommitBtn" onclick="_acctDoCommitBillingImport()" disabled>Import</button></div>'
+  );
+}
+
+function _acctDownloadBillingTemplate() {
+  showToast('Building template…', 'info');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { showToast((res&&res.error)||'Failed.', 'error'); return; }
+      var rows = res.data || [];
+      function csvEscape(v) {
+        v = (v === null || v === undefined) ? '' : String(v);
+        return (v.indexOf(',') !== -1 || v.indexOf('"') !== -1 || v.indexOf('\n') !== -1) ? '"' + v.replace(/"/g, '""') + '"' : v;
+      }
+      var lines = [_acctBillingImportHeaders.join(',')];
+      rows.forEach(function(r) {
+        lines.push([r.connectionId, r.vaName, r.customerName, r.accountName, r.status, '', '', '', '', ''].map(csvEscape).join(','));
+      });
+      var blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+      var link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'billing-import-template.csv';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast('Template downloaded — fill in BillingMonthYear (e.g. 2026-05), BillingDate, BilledStatus, PaymentStatus, and PaymentDate.', 'success');
+    })
+    .withFailureHandler(function(err) { showToast(err.message, 'error'); })
+    .getConnectionsForBillingImportTemplate();
+}
+
+function _acctBillingImportFileChosen(input) {
+  var errEl = document.getElementById('acctBillingImportErr');
+  var btn = document.getElementById('acctBillingImportCommitBtn');
+  if (errEl) errEl.textContent = '';
+  if (btn) btn.disabled = true;
+  if (!input.files || !input.files.length) return;
+
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var parsed = _acctParseBillingCsv(e.target.result);
+    if (!parsed.ok) { if (errEl) errEl.textContent = parsed.error; return; }
+    _acctBillingImportRows = parsed.rows;
+    _acctRenderBillingImportPreview(parsed.rows);
+    if (btn) btn.disabled = false;
+  };
+  reader.readAsText(input.files[0]);
+}
+
+// Minimal CSV parser — handles quoted fields (including embedded commas
+// and escaped quotes), same approach as the Attendance module's own
+// round-trip import.
+function _acctParseBillingCsv(text) {
+  var lines = text.split(/\r\n|\n/).filter(function(l){ return l.trim() !== ''; });
+  if (lines.length < 2) return { ok: false, error: 'File has no data rows.' };
+
+  function parseLine(line) {
+    var out = [], cur = '', inQuotes = false;
+    for (var i = 0; i < line.length; i++) {
+      var c = line[i];
+      if (inQuotes) {
+        if (c === '"' && line[i+1] === '"') { cur += '"'; i++; }
+        else if (c === '"') { inQuotes = false; }
+        else { cur += c; }
+      } else {
+        if (c === '"') inQuotes = true;
+        else if (c === ',') { out.push(cur); cur = ''; }
+        else cur += c;
+      }
+    }
+    out.push(cur);
+    return out;
+  }
+
+  var headerLine = parseLine(lines[0]);
+  var connIdCol = headerLine.indexOf('ConnectionID');
+  var ymCol = headerLine.indexOf('BillingMonthYear');
+  if (connIdCol === -1 || ymCol === -1) return { ok: false, error: 'ConnectionID and BillingMonthYear columns are required — this file may not match the expected template.' };
+
+  var rows = [];
+  for (var i = 1; i < lines.length; i++) {
+    var cells = parseLine(lines[i]);
+    var row = {};
+    headerLine.forEach(function(h, idx) { row[h] = cells[idx] !== undefined ? cells[idx] : ''; });
+    if (!row.ConnectionID || !row.BillingMonthYear) continue; // skip rows not yet filled in
+    rows.push(row);
+  }
+  if (!rows.length) return { ok: false, error: 'No rows with both ConnectionID and BillingMonthYear were found.' };
+  return { ok: true, rows: rows };
+}
+
+function _acctRenderBillingImportPreview(rows) {
+  var wrap = document.getElementById('acctBillingImportPreviewWrap'); if (!wrap) return;
+  wrap.innerHTML =
+    '<div class="section-card" style="margin-top:10px;">' +
+      '<div style="font-size:12.5px;font-weight:700;margin-bottom:6px;">' + rows.length + ' row(s) found</div>' +
+      '<div style="max-height:220px;overflow-y:auto;border:1px solid var(--border-light);border-radius:6px;">' +
+        '<table style="width:100%;font-size:11.5px;"><thead><tr style="background:var(--surface-2);">' +
+          '<th style="padding:4px 8px;text-align:left;">VA</th><th style="padding:4px 8px;">Month</th><th style="padding:4px 8px;">Billing Date</th><th style="padding:4px 8px;">Billed?</th><th style="padding:4px 8px;">Payment</th>' +
+        '</tr></thead><tbody>' +
+        rows.slice(0, 200).map(function(r) {
+          return '<tr>' +
+            '<td style="padding:4px 8px;text-align:left;">' + _esc(r.VAName||r.ConnectionID) + '</td>' +
+            '<td style="padding:4px 8px;text-align:center;">' + _esc(r.BillingMonthYear||'—') + '</td>' +
+            '<td style="padding:4px 8px;text-align:center;">' + _esc(r.BillingDate||'—') + '</td>' +
+            '<td style="padding:4px 8px;text-align:center;">' + _esc(r.BilledStatus||'—') + '</td>' +
+            '<td style="padding:4px 8px;text-align:center;">' + _esc(r.PaymentStatus||'—') + '</td>' +
+          '</tr>';
+        }).join('') +
+        (rows.length > 200 ? '<tr><td colspan="5" style="padding:6px 8px;text-align:center;color:var(--text-muted);">…and ' + (rows.length-200) + ' more</td></tr>' : '') +
+        '</tbody></table>' +
+      '</div>' +
+    '</div>';
+}
+
+function _acctDoCommitBillingImport() {
+  var errEl = document.getElementById('acctBillingImportErr');
+  var btn = document.getElementById('acctBillingImportCommitBtn');
+  if (!_acctBillingImportRows.length) { if (errEl) errEl.textContent = 'No parsed rows to import.'; return; }
+
+  var payload = _acctBillingImportRows.map(function(r) {
+    return {
+      connectionId: r.ConnectionID,
+      yearMonth: r.BillingMonthYear,
+      billingDate: r.BillingDate || '',
+      billedStatus: r.BilledStatus || 'Not Billed',
+      paymentStatus: r.PaymentStatus || 'Not Yet Paid',
+      paymentDate: r.PaymentDate || ''
+    };
+  });
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { if (errEl) errEl.textContent = (res&&res.error)||'Failed.'; if (btn) { btn.disabled=false; btn.textContent='Import'; } return; }
+      var msg = 'Imported ' + res.saved + ' row(s).';
+      if (res.errors && res.errors.length) msg += ' (' + res.errors.length + ' row(s) skipped — see log.)';
+      showToast(msg, res.errors && res.errors.length ? 'warning' : 'success');
+      closeModal();
+      if (typeof _acctLoadGrid === 'function') _acctLoadGrid();
+    })
+    .withFailureHandler(function(err) { if (errEl) errEl.textContent = err.message; if (btn) { btn.disabled=false; btn.textContent='Import'; } })
+    .importBillingRecords(payload);
+}
+
+// ── VA Connections tab (§ new request) ────────────────────────────────
+var _acctVAConnAll = [];
+var _acctVAConnFiltered = [];
+var _acctVAConnPageNum = 1;
+var _acctVAConnPageSize = 50;
+var _acctVAConnSortCol = 'customerName';
+var _acctVAConnSortDir = 'asc';
+var _acctVAConnSearch = '';
+
+function _acctRenderVAConnTab(container) {
+  var deptOpts = (CMS.settings.Department||[]).map(function(d){ return '<option value="'+_esc(d.label)+'">'+_esc(d.label)+'</option>'; }).join('');
+  container.innerHTML =
+    '<div class="section-card">' +
+      '<div class="table-controls" style="flex-wrap:wrap;gap:8px;">' +
+        '<div class="table-search"><svg width="13" height="13" viewBox="0 0 14 14" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.6"/><path d="M9.5 9.5L12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>' +
+          '<input type="text" id="acctVAConnSearch" placeholder="Search customer or VA…" oninput="_acctVAConnSearchChanged(this.value)" /></div>' +
+        '<select class="form-select" style="width:auto;padding:6px 10px;font-size:12px;" id="acctVAConnDeptFilter" onchange="_acctVAConnApplyFilters()">' +
+          '<option value="">All Departments</option>' + deptOpts +
+        '</select>' +
+        '<select class="form-select" style="width:auto;padding:6px 10px;font-size:12px;" id="acctVAConnBTFilter" onchange="_acctVAConnApplyFilters()">' +
+          '<option value="">All Billing Types</option><option value="Prepaid">Prepaid</option><option value="Postpaid">Postpaid</option>' +
+        '</select>' +
+        '<div class="table-rows-select">Show <select id="acctVAConnPageSizeSel" onchange="_acctVAConnSetPageSize(this.value)"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option><option value="all">All</option></select> rows</div>' +
+      '</div>' +
+      '<div id="acctVAConnTableWrap">' + _loadingHtml('Loading VA connections…', '200px') + '</div>' +
+      '<div class="pagination" id="acctVAConnPager"></div>' +
+    '</div>';
+  _acctVAConnLoadAll();
+}
+function _acctVAConnLoadAll() {
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) {
+        var wrap = document.getElementById('acctVAConnTableWrap');
+        if (wrap) wrap.innerHTML = '<div class="empty-state"><h3>Error</h3><p>'+_esc((res&&res.error)||'Something went wrong loading connections.')+'</p></div>';
+        return;
+      }
+      _acctVAConnAll = res.data;
+      _acctVAConnApplyFilters();
+    })
+    .withFailureHandler(function(err) {
+      var wrap = document.getElementById('acctVAConnTableWrap');
+      if (wrap) wrap.innerHTML = '<div class="empty-state"><h3>Error</h3><p>'+_esc(err.message)+'</p></div>';
+    })
+    .getAccountingVAConnectionsList();
+}
+function _acctVAConnSearchChanged(val) { _acctVAConnSearch = val; _acctVAConnApplyFilters(); }
+function _acctVAConnSetPageSize(v) { _acctVAConnPageSize = (v === 'all') ? Infinity : (parseInt(v)||50); _acctVAConnPageNum = 1; _acctVAConnRenderTable(); }
+function _acctVAConnGoPage(pg) {
+  var max = Math.max(1, Math.ceil(_acctVAConnFiltered.length / _acctVAConnPageSize));
+  if (pg >= 1 && pg <= max) { _acctVAConnPageNum = pg; _acctVAConnRenderTable(); }
+}
+function _acctVAConnApplyFilters() {
+  var searchLower = _acctVAConnSearch.trim().toLowerCase();
+  var deptVal = (document.getElementById('acctVAConnDeptFilter')||{}).value || '';
+  var btVal = (document.getElementById('acctVAConnBTFilter')||{}).value || '';
+  _acctVAConnFiltered = _acctVAConnAll.filter(function(r) {
+    if (deptVal && r.department !== deptVal) return false;
+    if (btVal && r.billingType !== btVal) return false;
+    if (searchLower && (r.customerName||'').toLowerCase().indexOf(searchLower) === -1 && (r.vaName||'').toLowerCase().indexOf(searchLower) === -1) return false;
+    return true;
+  });
+  _acctVAConnPageNum = 1;
+  _acctVAConnRenderTable();
+}
+function _acctVAConnSortBy(col) {
+  if (_acctVAConnSortCol === col) { _acctVAConnSortDir = _acctVAConnSortDir === 'asc' ? 'desc' : 'asc'; }
+  else { _acctVAConnSortCol = col; _acctVAConnSortDir = 'asc'; }
+  _acctVAConnRenderTable();
+}
+function _acctVAConnSortArrow(col) {
+  if (_acctVAConnSortCol !== col) return '';
+  return _acctVAConnSortDir === 'asc' ? ' ▲' : ' ▼';
+}
+function _acctVAConnRenderTable() {
+  var wrap = document.getElementById('acctVAConnTableWrap'); if (!wrap) return;
+  var col = _acctVAConnSortCol, dir = _acctVAConnSortDir;
+  var sorted = _acctVAConnFiltered.slice().sort(function(a,b) {
+    var av = a[col], bv = b[col];
+    if (col === 'rate') { av = Number(av)||0; bv = Number(bv)||0; }
+    else if (col === 'startDate') { av = av ? new Date(av).getTime() : 0; bv = bv ? new Date(bv).getTime() : 0; }
+    else { av = String(av||'').toLowerCase(); bv = String(bv||'').toLowerCase(); }
+    if (av < bv) return dir === 'asc' ? -1 : 1;
+    if (av > bv) return dir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  var start = (_acctVAConnPageNum-1) * _acctVAConnPageSize;
+  var pageRows = sorted.slice(start, start + _acctVAConnPageSize);
+
+  function th(label, key) {
+    return '<th style="cursor:pointer;white-space:nowrap;" onclick="_acctVAConnSortBy(\''+key+'\')">'+_esc(label)+_acctVAConnSortArrow(key)+'</th>';
+  }
+
+  wrap.innerHTML = '<div class="table-wrap"><table>' +
+    '<thead><tr>' +
+      th('Customer','customerName') + th('VA','vaName') + th('Department','department') +
+      th('Start Date','startDate') + th('Billing Type','billingType') + th('Rate','rate') +
+      '<th style="width:160px;">Actions</th>' +
+    '</tr></thead>' +
+    '<tbody>' + (pageRows.length ? pageRows.map(function(r) {
+      return '<tr>' +
+        '<td><a href="#" data-cid="'+_esc(r.customerId)+'" onclick="custOpenModal(this.dataset.cid);return false;" style="color:var(--accent);font-weight:600;">'+_esc(r.customerName)+'</a></td>' +
+        '<td>'+_esc(r.vaName)+'</td>' +
+        '<td>'+_esc(r.department||'—')+'</td>' +
+        '<td>'+_fdate(r.startDate)+'</td>' +
+        '<td>'+_esc(r.billingType)+'</td>' +
+        '<td>$'+_acctFmt(r.rate)+'</td>' +
+        '<td><button class="btn btn-secondary btn-sm" data-cid="'+_esc(r.connectionId)+'" data-vn="'+_esc(r.vaName)+'" onclick="_acctOpenPaymentHistory(this.dataset.cid,this.dataset.vn)">Payment History</button></td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="7" class="muted" style="text-align:center;padding:16px;">No matching connections.</td></tr>') +
+    '</tbody></table></div>';
+
+  var pager = document.getElementById('acctVAConnPager');
+  if (pager) {
+    var total = sorted.length, pages = Math.max(1, Math.ceil(total / _acctVAConnPageSize));
+    var s = total ? start+1 : 0, e = Math.min(_acctVAConnPageNum*_acctVAConnPageSize, total);
+    pager.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">Showing '+s+'–'+e+' of '+total+'</div>' +
+      '<div style="display:flex;gap:6px;">' +
+        '<button class="btn btn-secondary btn-sm" onclick="_acctVAConnGoPage('+(_acctVAConnPageNum-1)+')" '+(_acctVAConnPageNum<=1?'disabled':'')+'>‹ Prev</button>' +
+        '<button class="btn btn-secondary btn-sm" onclick="_acctVAConnGoPage('+(_acctVAConnPageNum+1)+')" '+(_acctVAConnPageNum>=pages?'disabled':'')+'>Next ›</button>' +
+      '</div>';
+  }
+}
+
+// ── Payment History modal (billing/payments + compensation) ──────────
+function _acctOpenPaymentHistory(connectionId, vaName) {
+  openModal(_loadingModal('300px', 'Loading payment history…'));
+  document.getElementById('modalBox').style.maxWidth = '820px';
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { closeModal(); showToast((res&&res.error)||'Failed to load.', 'error'); return; }
+      _acctRenderPaymentHistoryModal(res.data, vaName);
+    })
+    .withFailureHandler(function(err) { closeModal(); showToast(err.message, 'error'); })
+    .getConnectionPaymentHistory(connectionId);
+}
+function _acctRenderPaymentHistoryModal(data, vaName) {
+  var statusBadge = { Paid: 'badge-active', Issued: 'badge-returning', PartiallyPaid: 'badge-inactive', Overdue: 'badge-terminated' };
+  var billingRows = data.billingHistory.map(function(b) {
+    var payments = data.paymentsByBillingId[b.billingId] || [];
+    var paymentsHtml = payments.length
+      ? payments.map(function(p){ return '<div style="font-size:11px;color:var(--text-muted);">'+_fdate(p.datePaid)+' — $'+_acctFmt(p.amountPaid)+' ('+_esc(p.paymentStatus)+')</div>'; }).join('')
+      : '<span class="muted" style="font-size:11px;">No payments recorded</span>';
+    return '<tr>' +
+      '<td>'+_esc(b.billingMonth)+'</td>' +
+      '<td>$'+_acctFmt(b.totalBilled)+'</td>' +
+      '<td><span class="badge '+(statusBadge[b.status]||'badge-role')+'">'+_esc(b.status)+'</span></td>' +
+      '<td>'+paymentsHtml+'</td>' +
+    '</tr>';
+  }).join('');
+
+  var comp = data.compensation;
+  var compHtml = comp && comp.current
+    ? '<div style="font-size:13px;">Current rate: <strong>$'+_acctFmt(comp.current.rate)+'/hr</strong>' +
+        (comp.current.nightDiffActive ? ' · Night Diff: <strong>'+_esc(comp.current.nightDiffType==='Fixed'?('$'+_acctFmt(comp.current.nightDiffValue)+'/hr'):(comp.current.nightDiffValue+'%'))+'</strong>' : '') +
+      '</div>'
+    : '<div class="muted" style="font-size:13px;">No compensation history on file.</div>';
+
+  openModal(
+    '<div class="modal-header"><div class="modal-title">Payment History — '+_esc(vaName)+'</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+    '<div class="modal-body" style="max-height:70vh;overflow-y:auto;">' +
+      '<div class="section-card" style="margin-bottom:14px;">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;">' +
+          '<div class="section-title" style="margin-bottom:0;">Rate &amp; Night Differential</div>' +
+          '<button class="btn btn-secondary btn-sm" onclick="closeModal();vaCompOpenModal(\''+_esc(data.connectionId)+'\',\''+_esc(vaName)+'\')">Manage Compensation</button>' +
+        '</div>' +
+        '<div style="margin-top:8px;">' + compHtml + '</div>' +
+      '</div>' +
+      '<div class="section-title" style="margin-bottom:8px;">Billing &amp; Payments <span style="font-size:11px;font-weight:400;color:var(--text-muted);">(this customer\'s full billing history)</span></div>' +
+      '<div class="table-wrap"><table>' +
+        '<thead><tr><th>Billing Month</th><th>Total Billed</th><th>Status</th><th>Payments</th></tr></thead>' +
+        '<tbody>' + (billingRows || '<tr><td colspan="4" class="muted" style="text-align:center;padding:16px;">No billing cycles yet.</td></tr>') + '</tbody>' +
+      '</table></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Close</button></div>'
+  );
+}
+
+// ── Add Entry (Fees & Deposits) — multi-department, independent waivers ──
+var _acctFeeBlockCount = 0;
+function _acctOpenAddFeeEntry() {
+  openModal(_loadingModal('300px', 'Loading customers…'));
+  google.script.run
+    .withSuccessHandler(function(res) {
+      var list = (res && (res.data || res)) || [];
+      window._acctFeeCustList = list.slice().sort(function(a,b){return (a.customerName||'').localeCompare(b.customerName||'');});
+      _acctFeeBlockCount = 0;
+
+      document.getElementById('modalBox').style.maxWidth = '640px';
+      openModal(
+        '<div class="modal-header"><div class="modal-title">Add Fee &amp; Deposit Entry</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+        '<div class="modal-body" style="max-height:72vh;overflow-y:auto;">' +
+
+          '<div class="form-group"><label class="form-label">Customer <span class="required">*</span></label><select class="form-select" id="f_acctFeeCust"></select></div>' +
+
+          '<div class="form-row">' +
+            '<div class="form-group"><label class="form-label">Billing Date</label><input class="form-input" id="f_acctFeeBillingDate" type="date" value="'+_todayStr()+'" /></div>' +
+            '<div class="form-group"><label class="form-label">Payment Date</label><input class="form-input" id="f_acctFeePaymentDate" type="date" /></div>' +
+          '</div>' +
+          '<div class="form-hint" style="margin-top:-6px;margin-bottom:16px;">Normally the same for both the One-Time Fee and Deposit below — shared across every department added here.</div>' +
+
+          '<div id="acctFeeDeptBlocks"></div>' +
+          '<button type="button" class="btn btn-secondary btn-sm" onclick="_acctFeeAddDeptBlock()" style="margin-bottom:12px;">+ Add Another Department</button>' +
+
+          '<div id="acctFeeEntryErr" style="color:var(--danger);font-size:12.5px;margin-top:6px;"></div>' +
+        '</div>' +
+        '<div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+          '<button class="btn btn-primary" id="acctFeeEntryBtn" onclick="_acctDoAddFeeEntry()">Save</button></div>'
+      );
+
+      var custOpts = '<option value="">Select customer…</option>' + list.map(function(c){ return '<option value="'+_esc(c.customerId)+'">'+_esc(c.customerName)+'</option>'; }).join('');
+      document.getElementById('f_acctFeeCust').innerHTML = custOpts;
+      _acctFeeAddDeptBlock();
+    })
+    .withFailureHandler(function(err) { closeModal(); showToast(err.message, 'error'); })
+    .getCustomers({});
+}
+
+// Renders one department block — its own department dropdown, OTF and
+// Deposit amount/waive/reason, independent of every other block. A
+// remove (×) button appears once there's more than one block, since a
+// single, required block can't be removed.
+function _acctFeeAddDeptBlock() {
+  var blockId = 'acctFeeBlock' + (_acctFeeBlockCount++);
+  var deptOpts = '<option value="">Select department…</option>' + (CMS.settings.Department||[]).map(function(d){ return '<option value="'+_esc(d.label)+'">'+_esc(d.label)+'</option>'; }).join('');
+  var wrap = document.getElementById('acctFeeDeptBlocks');
+  var block = document.createElement('div');
+  block.className = 'section-card acct-fee-dept-block';
+  block.dataset.blockId = blockId;
+  block.style.marginBottom = '16px';
+  block.style.padding = '16px';
+  block.innerHTML =
+    '<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:16px;">' +
+      '<div class="form-group" style="margin-bottom:0;flex:1;min-width:0;"><label class="form-label">Department <span class="required">*</span></label><select class="form-select acct-fee-dept-select">'+deptOpts+'</select></div>' +
+      '<button type="button" class="btn btn-ghost btn-icon acct-fee-remove-block" style="margin-top:22px;flex-shrink:0;color:var(--danger);display:none;" title="Remove this department">✕</button>' +
+    '</div>' +
+    _acctFeeGroupHtml('otf', '💵', 'One-Time Fee', '#3b82f6', '#1d4ed8') +
+    _acctFeeGroupHtml('dep', '🏦', 'Deposit', '#8b5cf6', '#6d28d9');
+  wrap.appendChild(block);
+  var removeBtn = block.querySelector('.acct-fee-remove-block');
+  removeBtn.onclick = function() { block.remove(); _acctFeeUpdateRemoveButtons(); };
+  _acctFeeUpdateRemoveButtons();
+}
+
+// One fee group's HTML (used for both One-Time Fee and Deposit, which are
+// otherwise identical in shape) — Amount and the Waive checkbox sit in a
+// flex row with flex-wrap, so on a narrow screen they stack cleanly
+// instead of squeezing onto one line. Reason is always full-width below.
+function _acctFeeGroupHtml(prefix, icon, label, accentColor, textColor) {
+  return '<div class="rdr-dept-accent" style="border-left:3px solid '+accentColor+';background:'+accentColor+'0d;border-radius:8px;padding:14px 16px;margin-bottom:12px;">' +
+    '<div style="font-size:12.5px;font-weight:700;color:'+textColor+';margin-bottom:12px;display:flex;align-items:center;gap:6px;">' + icon + ' ' + label + '</div>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;margin-bottom:10px;">' +
+      '<div class="form-group" style="margin-bottom:0;min-width:110px;flex:0 1 140px;">' +
+        '<label class="form-label" style="font-size:11px;">Amount ($)</label>' +
+        '<input class="form-input acct-fee-'+prefix+'-amount" type="number" step="0.01" value="250" />' +
+      '</div>' +
+      '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;padding-top:22px;flex:1 1 180px;white-space:nowrap;">' +
+        '<input type="checkbox" class="acct-fee-'+prefix+'-waived" onchange="_acctToggleFeeWaiver(this)" style="width:15px;height:15px;accent-color:'+accentColor+';flex-shrink:0;" /> Waive or discount' +
+      '</label>' +
+    '</div>' +
+    '<div class="acct-fee-'+prefix+'-reason-wrap" style="display:none;">' +
+      '<label class="form-label" style="font-size:11px;">Reason</label>' +
+      '<textarea class="form-textarea acct-fee-'+prefix+'-reason" placeholder="Reason for waiving or discounting" style="min-height:52px;width:100%;"></textarea>' +
+    '</div>' +
+  '</div>';
+}
+// Remove buttons only show once there's more than one block — a lone
+// required block should never be removable down to zero.
+function _acctFeeUpdateRemoveButtons() {
+  var blocks = document.querySelectorAll('.acct-fee-dept-block');
+  blocks.forEach(function(b) {
+    var btn = b.querySelector('.acct-fee-remove-block');
+    if (btn) btn.style.display = blocks.length > 1 ? '' : 'none';
+  });
+}
+function _acctToggleFeeWaiver(cb) {
+  var isOtf = cb.classList.contains('acct-fee-otf-waived');
+  var wrap = cb.closest('.rdr-dept-accent').querySelector(isOtf ? '.acct-fee-otf-reason-wrap' : '.acct-fee-dep-reason-wrap');
+  if (wrap) wrap.style.display = cb.checked ? '' : 'none';
+}
+function _acctDoAddFeeEntry() {
+  var customerId = (document.getElementById('f_acctFeeCust')||{}).value;
+  var errEl = document.getElementById('acctFeeEntryErr');
+  if (!customerId) { if (errEl) errEl.textContent = 'Customer is required.'; return; }
+
+  var billingDate = (document.getElementById('f_acctFeeBillingDate')||{}).value || '';
+  var paymentDate = (document.getElementById('f_acctFeePaymentDate')||{}).value || '';
+
+  var entries = [];
+  var blocks = document.querySelectorAll('.acct-fee-dept-block');
+  for (var i = 0; i < blocks.length; i++) {
+    var b = blocks[i];
+    var dept = b.querySelector('.acct-fee-dept-select').value;
+    if (!dept) { if (errEl) errEl.textContent = 'Select a department for every block added.'; return; }
+
+    var otfWaived = b.querySelector('.acct-fee-otf-waived').checked;
+    var otfReason = (b.querySelector('.acct-fee-otf-reason').value||'').trim();
+    if (otfWaived && !otfReason) { if (errEl) errEl.textContent = 'A reason is required when waiving the One-Time Fee ('+dept+').'; return; }
+
+    var depWaived = b.querySelector('.acct-fee-dep-waived').checked;
+    var depReason = (b.querySelector('.acct-fee-dep-reason').value||'').trim();
+    if (depWaived && !depReason) { if (errEl) errEl.textContent = 'A reason is required when waiving the Deposit ('+dept+').'; return; }
+
+    entries.push({
+      customerId: customerId, department: dept,
+      billingDate: billingDate, paymentDate: paymentDate,
+      oneTimeFeeAmount: b.querySelector('.acct-fee-otf-amount').value || 250,
+      depositAmount: b.querySelector('.acct-fee-dep-amount').value || 250,
+      otfWaived: otfWaived, otfWaiverReason: otfReason,
+      depositWaived: depWaived, depositWaiverReason: depReason
+    });
+  }
+
+  // Same department can't be entered twice in one submission — each
+  // would independently try to claim the same one-time-fee eligibility.
+  var seenDepts = {};
+  for (var j = 0; j < entries.length; j++) {
+    if (seenDepts[entries[j].department]) { if (errEl) errEl.textContent = 'Department "'+entries[j].department+'" was added more than once.'; return; }
+    seenDepts[entries[j].department] = true;
+  }
+
+  if (errEl) errEl.textContent = '';
+  var btn = document.getElementById('acctFeeEntryBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { if (errEl) errEl.textContent = (res&&res.error)||'Failed.'; if (btn) { btn.disabled=false; btn.textContent='Save'; } return; }
+      var failedDepts = (res.results||[]).filter(function(r){ return !r.success; });
+      if (failedDepts.length) {
+        showToast('Saved ' + res.created + ' of ' + res.total + ' — ' + failedDepts.map(function(f){ return f.department+': '+f.error; }).join('; '), 'error');
+      } else {
+        showToast('Saved ' + res.created + ' department entr' + (res.created===1?'y':'ies') + '.', 'success');
+      }
+      closeModal();
+      _acctRenderFeesTab(document.getElementById('acctTopTabBody'));
+    })
+    .withFailureHandler(function(err) { if (errEl) errEl.textContent = err.message; if (btn) { btn.disabled=false; btn.textContent='Save'; } })
+    .createEnrollmentsBulk(entries);
+}
+</script>

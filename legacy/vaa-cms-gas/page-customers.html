@@ -1,0 +1,327 @@
+<!-- page-customers.html -->
+<div class="page-customers">
+
+  <!-- Header Row -->
+  <div class="flex items-center justify-between mb-4">
+    <div>
+      <div style="font-size:13px;color:var(--text-muted);">Manage all customer accounts</div>
+    </div>
+    <button class="btn btn-primary" id="btnAddCustomer" onclick="CustPage.openAdd()">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      Add Customer
+    </button>
+  </div>
+
+  <!-- Table Card -->
+  <div class="section-card">
+    <div class="table-controls">
+      <div class="table-search">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.6"/><path d="M9.5 9.5L12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <input type="text" id="custSearch" placeholder="Search customers…" oninput="CustPage.onSearch(this.value)" />
+      </div>
+      <div class="flex gap-2 items-center">
+        <select class="form-select" style="width:auto;padding:6px 10px;font-size:12px;" id="custStatusFilter" onchange="CustPage.onFilter()">
+          <option value="">All Statuses</option>
+          <option value="Active">Active</option>
+          <option value="Inactive">Inactive</option>
+          <option value="Terminated">Terminated</option>
+        </select>
+        <div class="table-rows-select">
+          Show
+          <select id="custPageSize" onchange="CustPage.onPageSizeChange(this.value)">
+            <option value="10" selected>10</option>
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+          rows
+        </div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="custTable">
+        <thead>
+          <tr>
+            <th onclick="CustPage.sort('customerName')">Customer Name <span class="sort-arrow">↕</span></th>
+            <th onclick="CustPage.sort('status')">Status <span class="sort-arrow">↕</span></th>
+            <th onclick="CustPage.sort('createdAt')">Created <span class="sort-arrow">↕</span></th>
+            <th onclick="CustPage.sort('updatedAt')">Last Updated <span class="sort-arrow">↕</span></th>
+            <th style="width:120px;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="custTableBody">
+          <tr><td colspan="5" style="text-align:center;padding:40px;color:var(--text-muted);">
+            <div class="loader-ring" style="margin:0 auto 8px;"></div>Loading…
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pagination" id="custPagination"></div>
+  </div>
+</div>
+
+<script>
+const CustPage = (() => {
+  let _all = [], _filtered = [], _page = 1, _pageSize = 10, _sortField = 'customerName', _sortAsc = true;
+
+  function init() {
+    google.script.run
+      .withSuccessHandler(res => {
+        if (!res.success) { showToast(res.error, 'error'); return; }
+        _all = res.data;
+        _applyFilters();
+      })
+      .withFailureHandler(err => showToast(err.message, 'error'))
+      .getCustomers({});
+  }
+
+  function _applyFilters() {
+    const q      = (document.getElementById('custSearch')?.value || '').toLowerCase();
+    const status = document.getElementById('custStatusFilter')?.value || '';
+    _filtered = _all.filter(r => {
+      const matchQ = !q || (r.customerName||'').toLowerCase().includes(q) || (r.customerId||'').toLowerCase().includes(q);
+      const matchS = !status || r.status === status;
+      return matchQ && matchS;
+    });
+    _filtered.sort((a, b) => {
+      let va = a[_sortField] || '', vb = b[_sortField] || '';
+      if (va instanceof Date) va = va.getTime(), vb = new Date(vb).getTime();
+      va = String(va).toLowerCase(); vb = String(vb).toLowerCase();
+      return _sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+    });
+    _page = 1;
+    _render();
+  }
+
+  function _render() {
+    const start = (_page - 1) * _pageSize;
+    const rows  = _filtered.slice(start, start + _pageSize);
+    const tbody = document.getElementById('custTableBody');
+    const canDel = CMS.user && CMS.user.permissions && CMS.user.permissions.canDelete;
+
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">
+        <svg width="36" height="36" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="7" r="3.5" stroke="currentColor" stroke-width="1.5"/><path d="M3 17c0-3.314 3.134-6 7-6s7 2.686 7 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <h3>No customers found</h3><p>Try adjusting your search or filters.</p>
+      </div></td></tr>`;
+    } else {
+      tbody.innerHTML = rows.map(r => `
+        <tr>
+          <td><a href="#" onclick="navigate('customer-profile','${_esc(r.customerId)}');return false;"
+              style="color:var(--accent);font-weight:600;">${_esc(r.customerName)}</a>
+              <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">${_esc(r.customerId)}</div>
+          </td>
+          <td><span class="badge badge-${(r.status||'').toLowerCase()}">${_esc(r.status||'—')}</span></td>
+          <td class="muted">${_fdate(r.createdAt)}</td>
+          <td class="muted">${_fdate(r.updatedAt)}</td>
+          <td>
+            <div class="flex gap-2">
+              <button class="btn btn-ghost btn-icon" title="Edit" onclick="CustPage.openEdit('${_esc(r.customerId)}')">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9.5 2.5l2 2-7 7H2.5v-2l7-7z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+              </button>
+              ${canDel ? `<button class="btn btn-ghost btn-icon" title="Delete" style="color:var(--danger)" onclick="CustPage.confirmDelete('${_esc(r.customerId)}','${_esc(r.customerName)}')">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 3.5h10M5.5 3.5V2h3v1.5M4 3.5l.5 8.5h5l.5-8.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+              </button>` : ''}
+            </div>
+          </td>
+        </tr>`).join('');
+    }
+
+    _renderPagination();
+    _updateSortHeaders();
+  }
+
+  function _renderPagination() {
+    const total = _filtered.length;
+    const pages = Math.ceil(total / _pageSize);
+    const start = (_page - 1) * _pageSize + 1;
+    const end   = Math.min(_page * _pageSize, total);
+    const el    = document.getElementById('custPagination');
+    if (!el) return;
+
+    let btns = '';
+    for (let p = 1; p <= pages; p++) {
+      if (p === 1 || p === pages || Math.abs(p - _page) <= 1) {
+        btns += `<button class="page-btn ${p===_page?'active':''}" onclick="CustPage.goPage(${p})">${p}</button>`;
+      } else if (Math.abs(p - _page) === 2) {
+        btns += `<span style="padding:0 4px;color:var(--text-muted)">…</span>`;
+      }
+    }
+
+    el.innerHTML = `
+      <span>Showing ${total ? start : 0}–${end} of ${total}</span>
+      <div class="page-btns">
+        <button class="page-btn" onclick="CustPage.goPage(${_page-1})" ${_page===1?'disabled':''}>‹</button>
+        ${btns}
+        <button class="page-btn" onclick="CustPage.goPage(${_page+1})" ${_page>=pages?'disabled':''}>›</button>
+      </div>`;
+  }
+
+  function _updateSortHeaders() {
+    document.querySelectorAll('#custTable thead th').forEach(th => {
+      th.classList.remove('sorted');
+      const arrow = th.querySelector('.sort-arrow');
+      if (arrow) arrow.textContent = '↕';
+    });
+    const fields = ['customerName','status','createdAt','updatedAt'];
+    const idx = fields.indexOf(_sortField);
+    if (idx >= 0) {
+      const ths = document.querySelectorAll('#custTable thead th');
+      if (ths[idx]) {
+        ths[idx].classList.add('sorted');
+        const arrow = ths[idx].querySelector('.sort-arrow');
+        if (arrow) arrow.textContent = _sortAsc ? '↑' : '↓';
+      }
+    }
+  }
+
+  function openAdd() {
+    openModal(_buildForm(null));
+    setTimeout(() => document.getElementById('f_customerName')?.focus(), 50);
+  }
+
+  function openEdit(id) {
+    const rec = _all.find(r => r.customerId === id);
+    if (!rec) { showToast('Customer not found', 'error'); return; }
+    openModal(_buildForm(rec));
+  }
+
+  function _buildForm(rec) {
+    const isEdit = !!rec;
+    const v = f => rec ? _esc(rec[f]||'') : '';
+    return `
+      <div class="modal-header">
+        <div class="modal-title">${isEdit ? 'Edit Customer' : 'Add Customer'}</div>
+        <button class="modal-close" onclick="closeModal()">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Customer Name <span class="required">*</span></label>
+          <input class="form-input" id="f_customerName" type="text" value="${v('customerName')}" placeholder="Enter customer name" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Status</label>
+          <select class="form-select" id="f_status">
+            ${['Active','Inactive','Terminated'].map(s =>
+              `<option value="${s}" ${(rec&&rec.status===s)?'selected':''}>${s}</option>`
+            ).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Notes</label>
+          <textarea class="form-textarea" id="f_notes" placeholder="Optional notes…">${rec ? _esc(rec.notes||'') : ''}</textarea>
+        </div>
+        <div id="custFormError" style="color:var(--danger);font-size:12.5px;margin-top:4px;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="CustPage.submitForm('${isEdit ? rec.customerId : ''}')">
+          ${isEdit ? 'Save Changes' : 'Create Customer'}
+        </button>
+      </div>`;
+  }
+
+  function submitForm(id) {
+    const name   = document.getElementById('f_customerName')?.value?.trim();
+    const status = document.getElementById('f_status')?.value;
+    const notes  = document.getElementById('f_notes')?.value;
+    const errEl  = document.getElementById('custFormError');
+
+    if (!name) { if (errEl) errEl.textContent = 'Customer Name is required.'; return; }
+    if (errEl) errEl.textContent = '';
+
+    const payload = { customerName: name, status, notes };
+    const btn = document.querySelector('.modal-footer .btn-primary');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+    if (id) {
+      google.script.run
+        .withSuccessHandler(res => _onSave(res))
+        .withFailureHandler(err => _onErr(err))
+        .updateCustomer(id, payload);
+    } else {
+      google.script.run
+        .withSuccessHandler(res => _onSave(res))
+        .withFailureHandler(err => _onErr(err))
+        .createCustomer(payload);
+    }
+  }
+
+  function _onSave(res) {
+    if (!res.success) {
+      const errEl = document.getElementById('custFormError');
+      if (errEl) errEl.textContent = (res.errors || [res.error]).join(' ');
+      const btn = document.querySelector('.modal-footer .btn-primary');
+      if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
+      return;
+    }
+    closeModal();
+    showToast('Customer saved successfully.', 'success');
+    _refresh();
+  }
+
+  function _onErr(err) {
+    showToast(err.message, 'error');
+    const btn = document.querySelector('.modal-footer .btn-primary');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+  }
+
+  function confirmDelete(id, name) {
+    openModal(`
+      <div class="modal-header">
+        <div class="modal-title">Delete Customer</div>
+        <button class="modal-close" onclick="closeModal()">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:14px;color:var(--text-primary);">Are you sure you want to delete <strong>${_esc(name)}</strong>?</p>
+        <p style="font-size:13px;color:var(--text-muted);margin-top:8px;">This action cannot be undone. All associated clients must be removed first.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-danger" onclick="CustPage.doDelete('${_esc(id)}')">Delete</button>
+      </div>`);
+  }
+
+  function doDelete(id) {
+    google.script.run
+      .withSuccessHandler(res => {
+        closeModal();
+        if (res.success) { showToast('Customer deleted.', 'success'); _refresh(); }
+        else showToast(res.error, 'error');
+      })
+      .withFailureHandler(err => showToast(err.message, 'error'))
+      .deleteCustomer(id);
+  }
+
+  function _refresh() {
+    google.script.run
+      .withSuccessHandler(res => { if (res.success) { _all = res.data; _applyFilters(); } })
+      .getCustomers({});
+  }
+
+  function sort(field) { _sortField === field ? _sortAsc = !_sortAsc : (_sortField = field, _sortAsc = true); _applyFilters(); }
+  function onSearch()  { _applyFilters(); }
+  function onFilter()  { _applyFilters(); }
+  function onPageSizeChange(v) { _pageSize = parseInt(v); _page = 1; _render(); }
+  function goPage(p)   { const max = Math.ceil(_filtered.length / _pageSize); if (p >= 1 && p <= max) { _page = p; _render(); } }
+
+  function _fdate(v) {
+    if (!v) return '—';
+    const d = new Date(v);
+    return isNaN(d) ? v : d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+  }
+  function _esc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  return { init, openAdd, openEdit, submitForm, confirmDelete, doDelete, sort, onSearch, onFilter, onPageSizeChange, goPage };
+})();
+
+CustPage.init();
+</script>
