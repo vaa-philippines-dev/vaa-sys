@@ -1,0 +1,368 @@
+<script>
+// ═══════════════════════════════════════════════════════════════════════
+// ATTENDANCE MODULE
+// ═══════════════════════════════════════════════════════════════════════
+var _attData = [];
+var _attMonth = new Date().getMonth() + 1;
+var _attYear  = new Date().getFullYear();
+var _attDaysInMonth = 30;
+var _attDirty = {}; // "connId|date" -> {connectionId, date, actualHours, referenceLink, notes}
+
+var ATT_MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+function _renderAttendancePage(container) {
+  container.innerHTML =
+    '<style>' +
+      '.att-page-wrap{margin:-18px -20px;padding:18px 20px;min-height:calc(100vh - 20px);}' +
+      '.att-table-scroll{overflow:auto;max-height:calc(100vh - 220px);border:1px solid var(--border-light);border-radius:var(--radius-md);}' +
+      '.att-table{border-collapse:collapse;width:max-content;font-size:12px;}' +
+      '.att-table th,.att-table td{border-bottom:1px solid var(--border-light);border-right:1px solid var(--border-light);white-space:nowrap;}' +
+      '.att-sticky{position:sticky;z-index:5;background:var(--surface);}' +
+      '.att-table thead th{position:sticky;top:0;z-index:6;background:#1e293b;color:#fff;font-size:10.5px;font-weight:700;padding:6px 8px;text-align:center;}' +
+      '.att-table thead th.att-sticky{z-index:8;}' +
+      '.att-weekend-head{background:#0f172a !important;}' +
+      '.att-weekend-cell{background:#f1f5f9;}' +
+      '.att-day-cell{position:relative;padding:4px 6px !important;text-align:center;min-width:56px;}' +
+      '.att-actual-input{width:42px;height:22px;border:1px solid var(--border);border-radius:4px;text-align:center;font-size:11.5px;font-weight:700;padding:0;}' +
+      '.att-actual-input.att-variance{border-color:#f59e0b;background:#fffbeb;color:#b45309;}' +
+      '.att-projected-label{font-size:9px;color:var(--text-muted);margin-top:2px;}' +
+      '.att-link-btn{position:absolute;top:2px;right:2px;width:14px;height:14px;border-radius:50%;background:var(--accent);color:#fff;border:none;font-size:10px;line-height:14px;padding:0;cursor:pointer;opacity:0;transition:opacity .15s;}' +
+      '.att-day-cell:hover .att-link-btn{opacity:1;}' +
+      '.att-link-btn.att-has-link{opacity:1;background:#059669;}' +
+      '.att-cutoff-summary{background:#eff6ff;font-weight:700;text-align:center;min-width:60px;}' +
+      '.att-cutoff-summary.variance-bad{color:#dc2626;}' +
+      '.att-cutoff-summary.variance-ok{color:#059669;}' +
+    '</style>' +
+    '<div class="att-page-wrap">' +
+      '<div class="flex items-center justify-between mb-3" style="flex-wrap:wrap;gap:10px;">' +
+        '<div>' +
+          '<div style="font-size:22px;font-weight:800;letter-spacing:-0.3px;">Attendance</div>' +
+          '<div style="font-size:13px;color:var(--text-muted);margin-top:3px;">Projected vs Actual hours for every active VA Connection this month, split by payroll cutoff.</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;align-items:center;">' +
+          '<select class="form-select" id="attMonthSel" style="width:auto;padding:6px 10px;font-size:12.5px;" onchange="_attMonthYearChanged()">' +
+            ATT_MONTH_NAMES.map(function(m,i){ return '<option value="'+(i+1)+'"'+((i+1)===_attMonth?' selected':'')+'>'+m+'</option>'; }).join('') +
+          '</select>' +
+          '<select class="form-select" id="attYearSel" style="width:auto;padding:6px 10px;font-size:12.5px;" onchange="_attMonthYearChanged()">' +
+            [0,1,2].map(function(i){ var y=new Date().getFullYear()-1+i; return '<option value="'+y+'"'+(y===_attYear?' selected':'')+'>'+y+'</option>'; }).join('') +
+          '</select>' +
+          '<button class="btn btn-secondary btn-sm" onclick="attExport()">⭳ Export to Excel</button>' +
+          '<button class="btn btn-secondary btn-sm" onclick="_attOpenImport()">⭱ Import Attendance</button>' +
+          '<button class="btn btn-primary btn-sm" id="attSaveBtn" onclick="attSaveAll()">Save<span id="attDirtyCount" style="display:none;"></span></button>' +
+        '</div>' +
+      '</div>' +
+      '<div id="attTableWrap"><div class="loading-screen" style="height:300px;"><div class="loader-ring"></div><p>Loading attendance…</p></div></div>' +
+    '</div>';
+  _attLoad();
+}
+
+function _attMonthYearChanged() {
+  _attMonth = parseInt((document.getElementById('attMonthSel')||{}).value, 10);
+  _attYear  = parseInt((document.getElementById('attYearSel')||{}).value, 10);
+  _attDirty = {};
+  _attLoad();
+}
+
+function _attLoad() {
+  var wrap = document.getElementById('attTableWrap'); if (!wrap) return;
+  wrap.innerHTML = '<div class="loading-screen" style="height:300px;"><div class="loader-ring"></div><p>Loading attendance…</p></div>';
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { wrap.innerHTML = '<div class="empty-state" style="padding:40px;"><h3>Could not load</h3><p>'+_esc((res&&res.error)||'')+'</p></div>'; return; }
+      _attData = res.data || [];
+      _attDaysInMonth = res.daysInMonth;
+      attRenderTable();
+    })
+    .withFailureHandler(function(err) { wrap.innerHTML = '<div class="empty-state" style="padding:40px;"><h3>Error</h3><p>'+_esc(err.message)+'</p></div>'; })
+    .getAttendanceData(_attMonth, _attYear);
+}
+
+function _attDateKey(day) {
+  return _attYear + '-' + String(_attMonth).padStart(2,'0') + '-' + String(day).padStart(2,'0');
+}
+function _attIsWeekend(day) {
+  var dow = new Date(_attYear, _attMonth-1, day).getDay();
+  return dow === 0 || dow === 6;
+}
+// Standard PH bi-monthly payroll split: 1st–15th, 16th–end of month.
+function _attCutoffs() {
+  return [
+    { label: 'Cutoff 1 (1–15)', from: 1, to: 15 },
+    { label: 'Cutoff 2 (16–' + _attDaysInMonth + ')', from: 16, to: _attDaysInMonth }
+  ];
+}
+
+function attRenderTable() {
+  var wrap = document.getElementById('attTableWrap'); if (!wrap) return;
+  var cutoffs = _attCutoffs();
+  var STICKY_W = [170, 150]; // only VA Name and Customer/Account are fixed
+  var stickyLeftOffsets = []; var running = 0;
+  STICKY_W.forEach(function(w){ stickyLeftOffsets.push(running); running += w; });
+
+  function stickyHeaderCell(label, idx) {
+    return '<th class="att-sticky" style="left:'+stickyLeftOffsets[idx]+'px;min-width:'+STICKY_W[idx]+'px;">'+label+'</th>';
+  }
+
+  var headHtml = '<tr>' +
+    stickyHeaderCell('VA Name', 0) + stickyHeaderCell('Customer / Account', 1) +
+    '<th style="min-width:70px;">Status</th>' +
+    '<th style="min-width:110px;">Service / Dept</th>' +
+    '<th style="min-width:90px;">Hours Type</th>' +
+    '<th style="min-width:70px;">Weekly Hrs</th>' +
+    '<th style="min-width:150px;">Schedule</th>' +
+    '<th style="min-width:90px;">Start Date</th>' +
+    '<th style="min-width:90px;">End / Pause Date</th>';
+  cutoffs.forEach(function(co) {
+    for (var d = co.from; d <= co.to; d++) {
+      var isWk = _attIsWeekend(d);
+      headHtml += '<th class="'+(isWk?'att-weekend-head':'')+'">'+d+'<div style="font-size:8.5px;font-weight:400;opacity:.7;">'+['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(_attYear,_attMonth-1,d).getDay()]+'</div></th>';
+    }
+    headHtml += '<th style="background:#334155 !important;">Projected<br/>vs Actual</th>';
+  });
+  headHtml += '</tr>';
+
+  var bodyHtml = _attData.length ? _attData.map(function(r) {
+    var breakdown = null;
+    try { breakdown = JSON.parse(r.scheduleBreakdown||'[]'); } catch(e) {}
+    var scheduleCell = typeof _hscDayChipsHtml === 'function' ? _hscDayChipsHtml(breakdown, r.hoursType) : '—';
+    var stCls = {New:'badge-returning',Active:'badge-active',Paused:'badge-paused',Terminated:'badge-terminated'}[r.status] || 'badge-inactive';
+
+    var rowHtml = '<tr>' +
+      '<td class="att-sticky" style="left:'+stickyLeftOffsets[0]+'px;text-align:left;font-weight:600;">' +
+        (r.hasDataIssue ? '<span title="'+_esc(r.dataIssue||'Data issue on this record')+'" style="color:#dc2626;margin-right:4px;cursor:help;">⚠</span>' : '') +
+        '<a href="#" data-cid="'+_esc(r.connectionId)+'" onclick="vaConnOpenModal(this.dataset.cid);return false;" style="color:var(--accent);">'+_esc(r.vaName)+'</a></td>' +
+      '<td class="att-sticky" style="left:'+stickyLeftOffsets[1]+'px;text-align:left;">'+_esc(r.customerName||'—')+(r.accountName?'<div style="font-size:10px;color:var(--text-muted);">'+_esc(r.accountName)+'</div>':'')+'</td>' +
+      '<td><span class="badge '+stCls+'" style="font-size:10px;">'+_esc(r.status)+'</span></td>' +
+      '<td style="text-align:left;">'+_esc(r.department||'—')+'</td>' +
+      '<td>'+_esc(r.hoursType||'—')+'</td>' +
+      '<td style="font-weight:700;">'+_esc(r.weeklyHours||0)+'h</td>' +
+      '<td>'+scheduleCell+'</td>' +
+      '<td>'+_fdate(r.startDate)+'</td>' +
+      '<td>'+(r.endDate?_fdate(r.endDate):'—')+'</td>';
+
+    cutoffs.forEach(function(co) {
+      var cutoffProjTotal = 0, cutoffActTotal = 0;
+      for (var d = co.from; d <= co.to; d++) {
+        var dateKey = _attDateKey(d);
+        var projected = r.dailyProjected ? r.dailyProjected[dateKey] : null;
+        var actualRec = r.dailyActual ? r.dailyActual[dateKey] : null;
+        var actualVal = actualRec ? actualRec.hours : projected;
+        var dirtyKey = r.connectionId + '|' + dateKey;
+        if (_attDirty[dirtyKey] && _attDirty[dirtyKey].actualHours !== '') actualVal = parseFloat(_attDirty[dirtyKey].actualHours);
+        var hasLink = (actualRec && actualRec.link) || (_attDirty[dirtyKey] && _attDirty[dirtyKey].referenceLink);
+        var isVariance = projected !== null && actualVal !== null && parseFloat(actualVal) !== parseFloat(projected);
+        cutoffProjTotal += (projected || 0);
+        cutoffActTotal += (actualVal !== null && actualVal !== undefined ? parseFloat(actualVal) : (projected || 0));
+        var isWk = _attIsWeekend(d);
+        var displayVal = (actualVal !== null && actualVal !== undefined) ? actualVal : '';
+        rowHtml += '<td class="att-day-cell'+(isWk?' att-weekend-cell':'')+'">' +
+          '<input type="number" step="0.5" min="0" class="att-actual-input'+(isVariance?' att-variance':'')+'" ' +
+            'value="'+displayVal+'" data-cid="'+_esc(r.connectionId)+'" data-date="'+dateKey+'" data-projected="'+(projected===null?'':projected)+'" ' +
+            'data-link="'+_esc((actualRec&&actualRec.link)||'')+'" onchange="attMarkDirty(this)" />' +
+          (projected !== null ? '<div class="att-projected-label">proj '+projected+'</div>' : '') +
+          '<button type="button" class="att-link-btn'+(hasLink?' att-has-link':'')+'" data-cid="'+_esc(r.connectionId)+'" data-date="'+dateKey+'" onclick="attOpenLinkPrompt(this)" title="Attach a reference link">+</button>' +
+        '</td>';
+      }
+      var variance = cutoffActTotal - cutoffProjTotal;
+      rowHtml += '<td class="att-cutoff-summary '+(variance!==0?'variance-bad':'variance-ok')+'">' +
+        cutoffProjTotal + ' / ' + cutoffActTotal + '<div style="font-size:9.5px;">'+(variance>0?'+':'')+variance+'h</div></td>';
+    });
+    rowHtml += '</tr>';
+    return rowHtml;
+  }).join('') : '<tr><td colspan="20"><div class="empty-state" style="padding:40px;"><h3>No active VA Connections for this month</h3></div></td></tr>';
+
+  wrap.innerHTML = '<div class="att-table-scroll"><table class="att-table"><thead>'+headHtml+'</thead><tbody>'+bodyHtml+'</tbody></table></div>';
+  _attUpdateDirtyCount();
+}
+
+function attMarkDirty(input) {
+  var connId = input.dataset.cid, date = input.dataset.date;
+  var key = connId + '|' + date;
+  var val = input.value === '' ? '' : parseFloat(input.value);
+  var projected = input.dataset.projected === '' ? null : parseFloat(input.dataset.projected);
+  var isVariance = projected !== null && val !== '' && val !== projected;
+  input.classList.toggle('att-variance', isVariance);
+  if (!_attDirty[key]) _attDirty[key] = { connectionId: connId, date: date, referenceLink: input.dataset.link||'', notes: '' };
+  _attDirty[key].actualHours = val;
+  _attUpdateDirtyCount();
+}
+
+function attOpenLinkPrompt(btn) {
+  var connId = btn.dataset.cid, date = btn.dataset.date;
+  var current = btn.classList.contains('att-has-link') ? (_attDirty[connId+'|'+date]||{}).referenceLink : '';
+  var url = prompt('Reference link (e.g. proof of absence):', current || 'https://');
+  if (url === null) return;
+  var key = connId + '|' + date;
+  var input = document.querySelector('.att-actual-input[data-cid="'+connId+'"][data-date="'+date+'"]');
+  if (!_attDirty[key]) _attDirty[key] = { connectionId: connId, date: date, actualHours: input ? input.value : '', notes: '' };
+  _attDirty[key].referenceLink = url;
+  if (input) input.dataset.link = url;
+  btn.classList.toggle('att-has-link', !!url);
+  _attUpdateDirtyCount();
+}
+
+function _attUpdateDirtyCount() {
+  var n = Object.keys(_attDirty).length;
+  var badge = document.getElementById('attDirtyCount');
+  if (badge) { badge.style.display = n ? '' : 'none'; badge.textContent = n ? ' (' + n + ')' : ''; }
+}
+
+function attSaveAll() {
+  var keys = Object.keys(_attDirty);
+  if (!keys.length) { showToast('Nothing to save.', 'info'); return; }
+  var payload = keys.map(function(k){ return _attDirty[k]; });
+  var btn = document.getElementById('attSaveBtn');
+  if (btn) { btn.disabled = true; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (btn) btn.disabled = false;
+      if (!res || !res.success) { showToast((res&&res.error)||'Failed.', 'error'); return; }
+      showToast(res.saved + ' record(s) saved.', 'success');
+      _attDirty = {};
+      _attLoad();
+    })
+    .withFailureHandler(function(err) { if (btn) btn.disabled = false; showToast(err.message, 'error'); })
+    .saveAttendanceRecords(payload);
+}
+
+function attExport() {
+  showToast('Preparing Excel export…', 'info');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { showToast((res&&res.error)||'Export failed.', 'error'); return; }
+      var link = document.createElement('a');
+      link.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,' + res.base64;
+      link.download = res.fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast('Export ready.', 'success');
+    })
+    .withFailureHandler(function(err) { showToast(err.message, 'error'); })
+    .exportAttendanceToExcel(_attMonth, _attYear, _attData);
+}
+
+// ── Attendance Import (§4.10) ────────────────────────────────────────
+var _attImportCsvText = null;
+var _attImportHeaders = [];
+function _attOpenImport() {
+  document.getElementById('modalBox').style.maxWidth = '560px';
+  openModal(
+    '<div class="modal-header"><div class="modal-title">Import Attendance</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+    '<div class="modal-body">' +
+      '<div class="form-group"><label class="form-label">CSV File <span class="required">*</span></label><input class="form-input" id="f_attImportFile" type="file" accept=".csv" onchange="_attImportFileChosen(this)" /></div>' +
+      '<div id="attImportMappingWrap" style="display:none;">' +
+        '<div class="form-hint" style="margin-bottom:10px;">Match your file\'s columns to the system fields below.</div>' +
+        '<div class="form-group"><label class="form-label">VA Name Column <span class="required">*</span></label><select class="form-select" id="f_attMapVaName"></select></div>' +
+        '<div class="form-group"><label class="form-label">Date Column <span class="required">*</span></label><select class="form-select" id="f_attMapDate"></select></div>' +
+        '<div class="form-group"><label class="form-label">Regular Hours Column <span class="required">*</span></label><select class="form-select" id="f_attMapHours"></select></div>' +
+        '<div class="form-group"><label class="form-label">Night Diff. Qualifying Hours Column <span style="font-size:10.5px;font-weight:400;color:var(--text-muted);">(optional)</span></label><select class="form-select" id="f_attMapNd"><option value="">— None —</option></select></div>' +
+      '</div>' +
+      '<div id="attImportErr" style="color:var(--danger);font-size:12.5px;"></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="btn btn-primary" id="attImportPreviewBtn" onclick="_attDoPreviewImport()" disabled>Preview</button></div>'
+  );
+}
+function _attImportFileChosen(input) {
+  var errEl = document.getElementById('attImportErr');
+  if (!input.files || !input.files.length) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    _attImportCsvText = e.target.result;
+    var firstLine = _attImportCsvText.split('\n')[0].replace('\r','');
+    _attImportHeaders = firstLine.split(',').map(function(h){ return h.trim(); });
+    if (_attImportHeaders.length < 2) { if (errEl) errEl.textContent = 'Could not detect columns in this file.'; return; }
+
+    var opts = '<option value="">Select…</option>' + _attImportHeaders.map(function(h){ return '<option value="'+_esc(h)+'">'+_esc(h)+'</option>'; }).join('');
+    document.getElementById('f_attMapVaName').innerHTML = opts;
+    document.getElementById('f_attMapDate').innerHTML = opts;
+    document.getElementById('f_attMapHours').innerHTML = opts;
+    document.getElementById('f_attMapNd').innerHTML = '<option value="">— None —</option>' + _attImportHeaders.map(function(h){ return '<option value="'+_esc(h)+'">'+_esc(h)+'</option>'; }).join('');
+
+    // Best-effort auto-match on common header names, still fully
+    // user-editable afterward — never assumed silently correct.
+    _attAutoMatchColumn('f_attMapVaName', ['va name','vaname','va','name']);
+    _attAutoMatchColumn('f_attMapDate', ['date']);
+    _attAutoMatchColumn('f_attMapHours', ['regular hours','hours','regularhours','actual hours']);
+    _attAutoMatchColumn('f_attMapNd', ['night diff hours','nd hours','nightdiffqualifyinghours']);
+
+    document.getElementById('attImportMappingWrap').style.display = '';
+    document.getElementById('attImportPreviewBtn').disabled = false;
+  };
+  reader.readAsText(input.files[0]);
+}
+function _attAutoMatchColumn(selectId, candidates) {
+  var sel = document.getElementById(selectId); if (!sel) return;
+  var match = _attImportHeaders.find(function(h){ return candidates.indexOf(h.toLowerCase()) !== -1; });
+  if (match) sel.value = match;
+}
+function _attDoPreviewImport() {
+  var mapping = {
+    vaName: (document.getElementById('f_attMapVaName')||{}).value,
+    date: (document.getElementById('f_attMapDate')||{}).value,
+    regularHours: (document.getElementById('f_attMapHours')||{}).value,
+    nightDiffQualifyingHours: (document.getElementById('f_attMapNd')||{}).value || undefined
+  };
+  var errEl = document.getElementById('attImportErr');
+  if (!mapping.vaName || !mapping.date || !mapping.regularHours) { if (errEl) errEl.textContent = 'VA Name, Date, and Regular Hours columns are required.'; return; }
+  var btn = document.getElementById('attImportPreviewBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { if (errEl) errEl.textContent = (res&&res.error)||'Failed.'; if (btn) { btn.disabled=false; btn.textContent='Preview'; } return; }
+      window._attImportMapping = mapping;
+      _attRenderImportPreview(res);
+    })
+    .withFailureHandler(function(err) { if (errEl) errEl.textContent = err.message; if (btn) { btn.disabled=false; btn.textContent='Preview'; } })
+    .previewAttendanceImport(_attImportCsvText, mapping);
+}
+function _attRenderImportPreview(res) {
+  var dupRows = res.duplicates.map(function(d, idx) {
+    return '<tr>' +
+      '<td><input type="checkbox" class="att-dup-checkbox" data-key="'+_esc(d.connectionId+'|'+d.date)+'" /></td>' +
+      '<td>'+_esc(d.vaName)+'</td><td>'+_esc(d.date)+'</td>' +
+      '<td>'+_esc(d.existingHours)+' → '+_esc(d.regularHours)+'</td>' +
+    '</tr>';
+  }).join('');
+  var invalidRows = res.invalid.slice(0, 20).map(function(inv) {
+    return '<tr><td>'+inv.row+'</td><td>'+_esc(inv.reason)+'</td></tr>';
+  }).join('');
+
+  openModal(
+    '<div class="modal-header"><div class="modal-title">Import Preview</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+    '<div class="modal-body" style="max-height:60vh;overflow-y:auto;">' +
+      '<div style="display:flex;gap:16px;margin-bottom:14px;">' +
+        '<div><div style="font-size:20px;font-weight:800;color:#15803d;">'+res.summary.validCount+'</div><div class="muted" style="font-size:11px;">Valid</div></div>' +
+        '<div><div style="font-size:20px;font-weight:800;color:#b45309;">'+res.summary.duplicateCount+'</div><div class="muted" style="font-size:11px;">Duplicates</div></div>' +
+        '<div><div style="font-size:20px;font-weight:800;color:#dc2626;">'+res.summary.invalidCount+'</div><div class="muted" style="font-size:11px;">Rejected</div></div>' +
+      '</div>' +
+      (res.duplicates.length ? '<div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">Duplicates — check any to overwrite (unchecked = skipped)</div>' +
+        '<div class="table-wrap" style="margin-bottom:14px;"><table><thead><tr><th></th><th>VA</th><th>Date</th><th>Existing → New Hours</th></tr></thead><tbody>'+dupRows+'</tbody></table></div>' : '') +
+      (res.invalid.length ? '<div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">Rejected Rows'+(res.invalid.length>20?' (showing first 20)':'')+'</div>' +
+        '<div class="table-wrap"><table><thead><tr><th>Row</th><th>Reason</th></tr></thead><tbody>'+invalidRows+'</tbody></table></div>' : '') +
+      '<div id="attImportCommitErr" style="color:var(--danger);font-size:12.5px;margin-top:8px;"></div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-secondary" onclick="_attOpenImport()">Back</button>' +
+      '<button class="btn btn-primary" id="attImportCommitBtn" onclick="_attDoCommitImport()">Import '+res.summary.validCount+' Row(s)</button></div>'
+  );
+}
+function _attDoCommitImport() {
+  var resolutions = Array.prototype.filter.call(document.querySelectorAll('.att-dup-checkbox'), function(cb){ return cb.checked; })
+    .map(function(cb){ return cb.dataset.key; });
+  var errEl = document.getElementById('attImportCommitErr');
+  var btn = document.getElementById('attImportCommitBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+  var fileInput = document.getElementById('f_attImportFile');
+  var fileName = (fileInput && fileInput.files && fileInput.files[0]) ? fileInput.files[0].name : 'unknown.csv';
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { if (errEl) errEl.textContent = (res&&res.error)||'Failed.'; if (btn) { btn.disabled=false; btn.textContent='Import'; } return; }
+      showToast('Imported ' + res.imported + ' row(s) — ' + res.status + '.', res.status === 'Failed' ? 'error' : 'success');
+      closeModal();
+      _attLoad();
+    })
+    .withFailureHandler(function(err) { if (errEl) errEl.textContent = err.message; if (btn) { btn.disabled=false; btn.textContent='Import'; } })
+    .commitAttendanceImport(_attImportCsvText, window._attImportMapping, fileName, resolutions);
+}
+</script>

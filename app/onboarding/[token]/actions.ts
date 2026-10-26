@@ -66,6 +66,8 @@ export async function submitOnboarding(token: string, input: OnboardingInput): P
           paymentMethod: part1.payment.method,
           paymentMethodOther: part1.payment.method === 'OTHER' ? part1.payment.methodOther : null,
           billingCountry: part1.payment.billingCountry || null,
+          // Pending until a VA connection starts (lib/status.ts).
+          statusLogs: { create: { fromStatus: null, toStatus: 'PENDING', changedByEmail: 'onboarding-form', changedAt: now } },
           contacts: {
             create: [
               {

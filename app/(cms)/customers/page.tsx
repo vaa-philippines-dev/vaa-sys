@@ -6,16 +6,25 @@ import { PortfolioCard } from '@/components/cms/PortfolioCard'
 import { STATUS_META, STATUS_ORDER } from '@/components/cms/status-meta'
 import { requireArea } from '@/lib/auth'
 import { customerPortfolio, listCustomers } from '@/lib/customers'
-import type { CustomerStatus } from '@/lib/customer-fields'
+import { customerScopeWhere } from '@/lib/scope'
+import { staffNames } from '@/lib/workforce'
+import { prisma } from '@/lib/prisma'
+import { startedVaCountsByCustomer } from '@/lib/va-connection-hooks'
+import { customerWarnings, type CustomerStatus } from '@/lib/customer-fields'
 
-export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string; status?: string }> }) {
-  await requireArea('customers', '/customers')
-  const { q, status } = await searchParams
+export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string; status?: string; cs?: string; review?: string }> }) {
+  const user = await requireArea('customers', '/customers')
+  const { q, status, cs, review } = await searchParams
   const activeStatus = STATUS_ORDER.includes(status as CustomerStatus) ? (status as CustomerStatus) : null
 
   const now = new Date()
-  const [{ rows, byStatus: partial, total }, portfolio] = await Promise.all([listCustomers({ q, status: activeStatus ?? undefined }), customerPortfolio(now)])
+  const scope = await customerScopeWhere(user)
+  const [{ rows, byStatus: partial, total }, portfolio] = await Promise.all([
+    listCustomers({ q, status: activeStatus ?? undefined, specialist: cs, review: review === '1', scope }),
+    customerPortfolio(now, scope),
+  ])
   const byStatus = Object.fromEntries(STATUS_ORDER.map((s) => [s, partial[s] ?? 0])) as Record<CustomerStatus, number>
+  const [names, vaCounts] = await Promise.all([staffNames(rows.map((r) => r.assignedSpecialistEmail ?? '')), startedVaCountsByCustomer(prisma, rows.map((r) => r.id))])
 
   const ledger: LedgerRow[] = rows.map((c) => ({
     id: c.id,
@@ -26,6 +35,9 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
     daysInStatus: Math.floor((now.getTime() - c.statusChangedAt.getTime()) / 86_400_000),
     accountCount: c.accountCount,
     vasRequested: c.vasRequested,
+    specialist: c.assignedSpecialistEmail ? (names.get(c.assignedSpecialistEmail) ?? c.assignedSpecialistEmail) : null,
+    inReview: !!c.reviewAction,
+    warnings: customerWarnings(c, vaCounts ? (vaCounts.get(c.id) ?? 0) : null),
   }))
 
   return (
@@ -34,8 +46,8 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         <div>
           <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Customer Management</p>
           <h1 className="mt-1 flex items-center gap-2 font-display text-2xl font-semibold">
-            {activeStatus ? STATUS_META[activeStatus].label : 'Customers'}
-            {activeStatus && (
+            {activeStatus ? STATUS_META[activeStatus].label : cs === 'none' ? 'Without a CS Specialist' : review === '1' ? 'Waiting for review' : 'Customers'}
+            {(activeStatus || cs || review) && (
               <Link href="/customers" className="rounded-full p-1 text-muted-foreground hover:bg-muted" title="Show every status" aria-label="Show every status">
                 <X className="h-3.5 w-3.5" />
               </Link>
@@ -44,6 +56,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         </div>
         <form action="/customers" className="flex h-9 items-center gap-2 rounded-xl border bg-card px-3">
           {activeStatus && <input type="hidden" name="status" value={activeStatus} />}
+          {cs && <input type="hidden" name="cs" value={cs} />}
           <Search className="h-3.5 w-3.5 text-muted-foreground" />
           <label htmlFor="customer-search" className="sr-only">
             Search customers

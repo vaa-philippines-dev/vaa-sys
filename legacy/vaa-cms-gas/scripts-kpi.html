@@ -1,0 +1,288 @@
+<script>
+// ══════════════════════════════════════════════════════════════════════
+// KPI Performance module — under Customer Success in the left nav.
+// ══════════════════════════════════════════════════════════════════════
+
+var _kpiRows = [];
+var _kpiType = 'Weekly';
+var _kpiPeriodDate = '';   // 'YYYY-MM-DD', empty until the backend tells us the default
+var _kpiSortCol = 'kpiStatus';
+var _kpiSortDir = 'asc';   // status priority order is itself ascending (Critical first)
+
+var KPI_STATUS_COLORS = {
+  'Critical':  { bg: '#fee2e2', fg: '#991b1b', border: '#fca5a5' },
+  'At Risk':   { bg: '#fef3c7', fg: '#92400e', border: '#fcd34d' },
+  'On Target': { bg: '#dcfce7', fg: '#166534', border: '#86efac' },
+  'No Data':   { bg: '#f1f5f9', fg: '#64748b', border: '#cbd5e1' }
+};
+var KPI_STATUS_ORDER = { 'Critical': 0, 'At Risk': 1, 'On Target': 2, 'No Data': 3 };
+
+function _renderKPIPerformancePage(container) {
+  if (!container) return;
+
+  // Default the period picker's own value to today's Monday-of-week (or
+  // 1st-of-month) purely for the input's own display purposes — the
+  // actual data period shown initially always comes from the backend's
+  // own "most recently completed period" computation, not from this.
+  var today = new Date();
+  var thisWeekMonday = _kpiThisWeekMonday(today);
+  var thisMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+
+  container.innerHTML =
+    '<div class="page-kpi-performance">' +
+      '<div style="font-size:20px;font-weight:800;color:var(--text-primary);margin-bottom:4px;">KPI Performance</div>' +
+      '<div style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">VA connection KPI status by week or month, with Team Lead intervention notes.</div>' +
+
+      '<div class="section-card">' +
+        '<div class="table-controls" style="flex-wrap:wrap;gap:10px;align-items:center;">' +
+          '<div class="table-search"><svg width="13" height="13" viewBox="0 0 14 14" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.6"/><path d="M9.5 9.5L12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>' +
+            '<input type="text" id="kpiSearch" placeholder="Search VA, customer, account…" oninput="_kpiRenderTable()" /></div>' +
+
+          '<div style="display:flex;gap:4px;background:var(--surface-2);border-radius:8px;padding:3px;">' +
+            '<button class="btn btn-sm" id="kpiTypeWeeklyBtn" style="padding:5px 12px;'+(_kpiType==='Weekly'?'background:var(--surface);box-shadow:0 1px 2px rgba(0,0,0,.08);':'background:transparent;border-color:transparent;')+'" onclick="_kpiTypeChanged(\'Weekly\')">Weekly</button>' +
+            '<button class="btn btn-sm" id="kpiTypeMonthlyBtn" style="padding:5px 12px;'+(_kpiType==='Monthly'?'background:var(--surface);box-shadow:0 1px 2px rgba(0,0,0,.08);':'background:transparent;border-color:transparent;')+'" onclick="_kpiTypeChanged(\'Monthly\')">Monthly</button>' +
+          '</div>' +
+
+          '<div id="kpiPeriodPickerWrap"></div>' +
+
+          '<div style="margin-left:auto;font-size:11.5px;color:var(--text-muted);" id="kpiPeriodLabel"></div>' +
+        '</div>' +
+
+        '<div id="kpiFallbackNotice" style="display:none;padding:8px 14px;background:var(--warning-light,#fffbeb);color:var(--warning,#b45309);font-size:12px;border-bottom:1px solid var(--border-light);"></div>' +
+
+        '<div class="table-wrap"><table>' +
+          '<thead><tr>' +
+            '<th style="cursor:pointer;" onclick="_kpiSortBy(\'vaName\')">VA Name'+_kpiSortArrow('vaName')+'</th>' +
+            '<th style="cursor:pointer;" onclick="_kpiSortBy(\'customerName\')">Customer'+_kpiSortArrow('customerName')+'</th>' +
+            '<th style="cursor:pointer;" onclick="_kpiSortBy(\'kpiStatus\')">KPI Status'+_kpiSortArrow('kpiStatus')+'</th>' +
+            '<th>Intervention Details</th>' +
+            '<th style="width:70px;">Action</th>' +
+          '</tr></thead>' +
+          '<tbody id="kpiTableBody"><tr><td colspan="6" class="muted" style="text-align:center;padding:24px;">Loading…</td></tr></tbody>' +
+        '</table></div>' +
+      '</div>' +
+    '</div>';
+
+  _kpiRenderPeriodPicker(thisWeekMonday, thisMonthStart);
+  _kpiLoad();
+}
+
+function _kpiThisWeekMonday(d) {
+  var day = d.getDay();
+  var diffToMonday = day === 0 ? 6 : day - 1;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - diffToMonday);
+}
+function _kpiDateToStr(d) {
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
+function _kpiRenderPeriodPicker(thisWeekMonday, thisMonthStart) {
+  var wrap = document.getElementById('kpiPeriodPickerWrap'); if (!wrap) return;
+  if (_kpiType === 'Monthly') {
+    var monthVal = _kpiPeriodDate ? _kpiPeriodDate.substring(0,7) : (thisMonthStart.getFullYear()+'-'+String(thisMonthStart.getMonth()+1).padStart(2,'0'));
+    wrap.innerHTML = '<input type="month" class="form-input" style="width:auto;padding:6px 10px;font-size:12px;" id="kpiPeriodMonth" value="'+monthVal+'" onchange="_kpiPeriodPicked(this.value+\'-01\')" />';
+  } else {
+    var weekVal = _kpiPeriodDate || _kpiDateToStr(thisWeekMonday);
+    wrap.innerHTML =
+      '<input type="date" class="form-input" style="width:auto;padding:6px 10px;font-size:12px;" id="kpiPeriodWeek" value="'+weekVal+'" onchange="_kpiWeekPicked(this.value)" title="Pick any date — snaps to that week\'s Monday" />';
+  }
+}
+
+// A week's data is always keyed by its Monday, per the request — if the
+// user picks a different day of that week, snap to the Monday instead
+// of silently ignoring the picked date or storing a non-Monday key.
+function _kpiWeekPicked(dateStr) {
+  if (!dateStr) return;
+  var parts = dateStr.split('-').map(Number);
+  var picked = new Date(parts[0], parts[1]-1, parts[2]);
+  var monday = _kpiThisWeekMonday(picked);
+  _kpiPeriodPicked(_kpiDateToStr(monday));
+}
+
+function _kpiPeriodPicked(dateStr) {
+  _kpiPeriodDate = dateStr;
+  _kpiLoad();
+}
+
+function _kpiTypeChanged(newType) {
+  if (newType === _kpiType) return;
+  _kpiType = newType;
+  _kpiPeriodDate = ''; // let the backend recompute its own default for the new type
+  var today = new Date();
+  _kpiRenderPeriodPicker(_kpiThisWeekMonday(today), new Date(today.getFullYear(), today.getMonth(), 1));
+  var wbtn = document.getElementById('kpiTypeWeeklyBtn'), mbtn = document.getElementById('kpiTypeMonthlyBtn');
+  if (wbtn) { wbtn.style.background = newType === 'Weekly' ? 'var(--surface)' : 'transparent'; wbtn.style.borderColor = newType === 'Weekly' ? '' : 'transparent'; wbtn.style.boxShadow = newType === 'Weekly' ? '0 1px 2px rgba(0,0,0,.08)' : ''; }
+  if (mbtn) { mbtn.style.background = newType === 'Monthly' ? 'var(--surface)' : 'transparent'; mbtn.style.borderColor = newType === 'Monthly' ? '' : 'transparent'; mbtn.style.boxShadow = newType === 'Monthly' ? '0 1px 2px rgba(0,0,0,.08)' : ''; }
+  _kpiLoad();
+}
+
+function _kpiLoad() {
+  var tbody = document.getElementById('kpiTableBody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px;">Loading…</td></tr>';
+  var _kpiCallStart = Date.now();
+  console.log('[KPI] Calling getConnectionKPIData(' + _kpiType + ', ' + JSON.stringify(_kpiPeriodDate) + ')…');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      console.log('[KPI] getConnectionKPIData responded after ' + (Date.now()-_kpiCallStart) + 'ms. success=', res && res.success, 'rows=', res && res.data && res.data.length, 'error=', res && res.error);
+      if (!res || !res.success) {
+        if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px;color:var(--danger);">'+_esc((res&&res.error)||'Failed to load.')+' <button class="btn btn-ghost btn-sm" onclick="_kpiLoad()" style="margin-left:8px;">Retry</button></td></tr>';
+        return;
+      }
+      _kpiRows = res.data || [];
+      _kpiPeriodDate = res.periodDate || _kpiPeriodDate;
+      var label = document.getElementById('kpiPeriodLabel');
+      if (label) {
+        label.textContent = (_kpiType === 'Weekly' ? 'Week of ' : 'Month of ') + _fdate(_kpiPeriodDate);
+      }
+      var fallbackNotice = document.getElementById('kpiFallbackNotice');
+      if (fallbackNotice) {
+        if (res.usedFallbackPeriod) {
+          fallbackNotice.style.display = '';
+          fallbackNotice.textContent = '⚠ No KPI data has been tracked yet for the most recent period — showing the latest available data instead (' + _fdate(_kpiPeriodDate) + ').';
+        } else {
+          fallbackNotice.style.display = 'none';
+        }
+      }
+      // Keep the period picker in sync in case the backend's own default
+      // differs from whatever the input currently shows (e.g. right
+      // after switching Weekly/Monthly, before the user has touched it).
+      var wInput = document.getElementById('kpiPeriodWeek');
+      if (wInput && _kpiType === 'Weekly') wInput.value = _kpiPeriodDate;
+      var mInput = document.getElementById('kpiPeriodMonth');
+      if (mInput && _kpiType === 'Monthly') mInput.value = _kpiPeriodDate.substring(0,7);
+      _kpiRenderTable();
+    })
+    .withFailureHandler(function(err) {
+      console.error('[KPI] getConnectionKPIData THREW after ' + (Date.now()-_kpiCallStart) + 'ms:', err.message);
+      if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px;color:var(--danger);">'+_esc(err.message)+' <button class="btn btn-ghost btn-sm" onclick="_kpiLoad()" style="margin-left:8px;">Retry</button></td></tr>';
+    })
+    .getConnectionKPIData(_kpiType, _kpiPeriodDate);
+}
+
+function _kpiSortArrow(col) {
+  if (_kpiSortCol !== col) return '';
+  return ' <span style="font-size:10px;">'+(_kpiSortDir==='asc'?'▲':'▼')+'</span>';
+}
+
+function _kpiSortBy(col) {
+  if (_kpiSortCol === col) {
+    _kpiSortDir = _kpiSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _kpiSortCol = col;
+    _kpiSortDir = 'asc';
+  }
+  // Re-render the header row too, so the sort arrow actually shows —
+  // only the table body would otherwise update.
+  var theadRow = document.querySelector('#kpiTableBody').closest('table').querySelector('thead tr');
+  if (theadRow) {
+    theadRow.innerHTML =
+      '<th style="cursor:pointer;" onclick="_kpiSortBy(\'vaName\')">VA Name'+_kpiSortArrow('vaName')+'</th>' +
+      '<th style="cursor:pointer;" onclick="_kpiSortBy(\'customerName\')">Customer'+_kpiSortArrow('customerName')+'</th>' +
+      '<th style="cursor:pointer;" onclick="_kpiSortBy(\'kpiStatus\')">KPI Status'+_kpiSortArrow('kpiStatus')+'</th>' +
+      '<th>Intervention Details</th>' +
+      '<th style="width:70px;">Action</th>';
+  }
+  _kpiRenderTable();
+}
+
+// Only ever rewrites the table body — never the shell/search box itself,
+// so typing in the search field never loses focus (the exact bug found
+// and fixed elsewhere in this app earlier this session).
+function _kpiRenderTable() {
+  var tbody = document.getElementById('kpiTableBody'); if (!tbody) return;
+  var q = ((document.getElementById('kpiSearch')||{}).value||'').toLowerCase();
+
+  var filtered = _kpiRows.filter(function(r) {
+    if (!q) return true;
+    return [r.vaName, r.customerName, r.accountName].some(function(v){ return (v||'').toLowerCase().indexOf(q) !== -1; });
+  });
+
+  filtered.sort(function(a, b) {
+    var av, bv;
+    if (_kpiSortCol === 'kpiStatus') {
+      av = KPI_STATUS_ORDER[a.kpiStatus] !== undefined ? KPI_STATUS_ORDER[a.kpiStatus] : 4;
+      bv = KPI_STATUS_ORDER[b.kpiStatus] !== undefined ? KPI_STATUS_ORDER[b.kpiStatus] : 4;
+    } else {
+      av = (a[_kpiSortCol]||'').toLowerCase();
+      bv = (b[_kpiSortCol]||'').toLowerCase();
+    }
+    var cmp = av < bv ? -1 : av > bv ? 1 : 0;
+    return _kpiSortDir === 'asc' ? cmp : -cmp;
+  });
+
+  tbody.innerHTML = filtered.length
+    ? filtered.map(function(r) {
+        var c = KPI_STATUS_COLORS[r.kpiStatus] || KPI_STATUS_COLORS['No Data'];
+        return '<tr>' +
+          '<td><div style="font-weight:600;">'+_esc(r.vaName)+'</div><div style="font-size:11px;color:var(--text-muted);margin-top:1px;">'+_esc(r.connectionId)+'</div></td>' +
+          '<td><div>'+_esc(r.customerName)+'</div>'+(r.accountName?'<div style="font-size:11px;color:var(--text-muted);margin-top:1px;">'+_esc(r.accountName)+'</div>':'')+'</td>' +
+          '<td><span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:11.5px;font-weight:700;background:'+c.bg+';color:'+c.fg+';border:1px solid '+c.border+';">'+_esc(r.kpiStatus)+'</span></td>' +
+          '<td>'+(r.interventionDetails
+            ? '<button class="btn btn-secondary btn-sm" data-cid="'+_esc(r.connectionId)+'" onclick="_kpiViewIntervention(this.dataset.cid)">View</button>'
+            : '<span class="muted">—</span>')+'</td>' +
+          '<td><button class="btn btn-ghost btn-icon" title="Add / Edit KPI" data-cid="'+_esc(r.connectionId)+'" onclick="_kpiOpenEdit(this.dataset.cid)">'+_svgEdit()+'</button></td>' +
+        '</tr>';
+      }).join('')
+    : '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px;">No VA connections found.</td></tr>';
+}
+
+function _kpiViewIntervention(connectionId) {
+  var row = _kpiRows.find(function(r){ return r.connectionId === connectionId; });
+  if (!row) return;
+  openModal(
+    '<div class="modal-header"><div class="modal-title">Intervention Details — '+_esc(row.vaName)+'</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+    '<div class="modal-body">' +
+      '<div style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">'+_esc(row.customerName)+(row.accountName?' — '+_esc(row.accountName):'')+' · '+_esc(row.connectionId)+'</div>' +
+      '<div style="white-space:pre-wrap;font-size:13.5px;line-height:1.6;color:var(--text-primary);">'+_esc(row.interventionDetails||'')+'</div>' +
+    '</div>' +
+    '<div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Close</button></div>'
+  );
+}
+
+function _kpiOpenEdit(connectionId) {
+  var row = _kpiRows.find(function(r){ return r.connectionId === connectionId; });
+  if (!row) return;
+  var statusOptions = ['No Data', 'On Target', 'At Risk', 'Critical'];
+  openModal(
+    '<div class="modal-header"><div class="modal-title">KPI Entry — '+_esc(row.vaName)+'</div><button class="modal-close" onclick="closeModal()">'+_svgClose()+'</button></div>' +
+    '<div class="modal-body">' +
+      '<div style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px;">'+(_kpiType==='Weekly'?'Week of ':'Month of ')+_fdate(_kpiPeriodDate)+' · '+_esc(row.customerName)+(row.accountName?' — '+_esc(row.accountName):'')+'</div>' +
+      '<div class="form-group"><label class="form-label">KPI Status <span class="required">*</span></label>' +
+        '<select class="form-select" id="f_kpiStatus">' +
+          statusOptions.map(function(s){ return '<option value="'+_esc(s)+'"'+(s===row.kpiStatus?' selected':'')+'>'+_esc(s)+'</option>'; }).join('') +
+        '</select></div>' +
+      '<div class="form-group"><label class="form-label">Intervention Details <span style="font-size:11px;font-weight:400;color:var(--text-muted);">(Team Lead notes)</span></label>' +
+        '<textarea class="form-textarea" id="f_kpiIntervention" style="min-height:90px;" placeholder="What intervention, coaching, or action plan is in place…">'+_esc(row.interventionDetails||'')+'</textarea></div>' +
+      '<div id="kpiEditErr" style="color:var(--danger);font-size:12.5px;"></div>' +
+    '</div>' +
+    '<div class="modal-footer">' +
+      '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="btn btn-primary" id="kpiSaveBtn" data-cid="'+_esc(connectionId)+'" onclick="_kpiSaveEntry(this.dataset.cid)">Save</button>' +
+    '</div>'
+  );
+}
+
+function _kpiSaveEntry(connectionId) {
+  var status = (document.getElementById('f_kpiStatus')||{}).value || 'No Data';
+  var intervention = (document.getElementById('f_kpiIntervention')||{}).value || '';
+  var errEl = document.getElementById('kpiEditErr');
+  var btn = document.getElementById('kpiSaveBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) {
+        if (errEl) errEl.textContent = (res&&res.error)||'Failed to save.';
+        if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+        return;
+      }
+      closeModal();
+      showToast('KPI entry saved.', 'success');
+      _kpiLoad();
+    })
+    .withFailureHandler(function(err) {
+      if (errEl) errEl.textContent = err.message;
+      if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+    })
+    .saveConnectionKPI(connectionId, _kpiType, _kpiPeriodDate, status, intervention);
+}
+</script>

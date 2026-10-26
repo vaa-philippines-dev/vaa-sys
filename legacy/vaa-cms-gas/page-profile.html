@@ -1,0 +1,226 @@
+<!-- page-profile.html — Customer Profile & Client Profile -->
+<div id="profileRoot">
+  <div class="loading-screen"><div class="loader-ring"></div><p>Loading profile…</p></div>
+</div>
+
+<script>
+const ProfilePage = (() => {
+
+  function loadCustomer(id) {
+    google.script.run
+      .withSuccessHandler(res => {
+        if (!res.success) { showToast(res.error, 'error'); navigate('customers'); return; }
+        _renderCustomerProfile(res.data);
+      })
+      .withFailureHandler(err => showToast(err.message, 'error'))
+      .getCustomerById(id);
+  }
+
+  function loadClient(id) {
+    google.script.run
+      .withSuccessHandler(res => {
+        if (!res.success) { showToast(res.error, 'error'); navigate('clients'); return; }
+        _renderClientProfile(res.data);
+      })
+      .withFailureHandler(err => showToast(err.message, 'error'))
+      .getClientById(id);
+  }
+
+  function _renderCustomerProfile(c) {
+    const canDel = CMS.user?.permissions?.canDelete;
+    const root = document.getElementById('profileRoot');
+    root.innerHTML = `
+      <!-- Breadcrumb -->
+      <div style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-muted);margin-bottom:16px;">
+        <a href="#" onclick="navigate('customers');return false;" style="color:var(--accent);">Customers</a>
+        <span>›</span>
+        <span style="color:var(--text-primary);font-weight:600;">${_esc(c.customerName)}</span>
+      </div>
+
+      <!-- Profile Header -->
+      <div class="section-card mb-4" style="margin-bottom:16px;">
+        <div style="padding:24px 28px;display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:18px;">
+            <div style="width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,#3b82f6,#6366f1);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:white;flex-shrink:0;">
+              ${_esc((c.customerName||'?').charAt(0).toUpperCase())}
+            </div>
+            <div>
+              <div style="font-size:20px;font-weight:800;color:var(--text-primary);">${_esc(c.customerName)}</div>
+              <div style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono);margin-top:2px;">${_esc(c.customerId)}</div>
+              <div style="margin-top:6px;display:flex;gap:6px;align-items:center;">
+                <span class="badge badge-${(c.status||'').toLowerCase()}">${_esc(c.status||'Active')}</span>
+                <span style="font-size:12px;color:var(--text-muted);">${(c.clients||[]).length} client(s)</span>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-secondary btn-sm" onclick="CustPage.openEdit('${_esc(c.customerId)}')">Edit Customer</button>
+            ${canDel ? `<button class="btn btn-danger btn-sm" onclick="CustPage.confirmDelete('${_esc(c.customerId)}','${_esc(c.customerName)}')">Delete</button>` : ''}
+          </div>
+        </div>
+        ${c.notes ? `<div style="padding:0 28px 20px;font-size:13px;color:var(--text-secondary);">${_esc(c.notes)}</div>` : ''}
+        <div style="padding:12px 28px;border-top:1px solid var(--border);display:flex;gap:24px;flex-wrap:wrap;">
+          <div><div style="font-size:10.5px;font-weight:700;letter-spacing:.6px;color:var(--text-muted);text-transform:uppercase;">Created</div>
+            <div style="font-size:12.5px;margin-top:2px;">${_fdate(c.createdAt)} by ${_esc(c.createdBy||'—')}</div></div>
+          <div><div style="font-size:10.5px;font-weight:700;letter-spacing:.6px;color:var(--text-muted);text-transform:uppercase;">Last Updated</div>
+            <div style="font-size:12.5px;margin-top:2px;">${_fdate(c.updatedAt)} by ${_esc(c.updatedBy||'—')}</div></div>
+        </div>
+      </div>
+
+      <!-- Clients under this customer -->
+      <div class="section-card">
+        <div class="section-header">
+          <div>
+            <div class="section-title">Client Accounts</div>
+            <div class="section-subtitle">All companies and accounts under ${_esc(c.customerName)}</div>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="ClientPage.openAdd('${_esc(c.customerId)}')">+ Add Client</button>
+        </div>
+        ${_renderClientMiniTable(c.clients || [], c.customerId)}
+      </div>`;
+  }
+
+  function _renderClientMiniTable(clients, custId) {
+    if (!clients.length) {
+      return `<div class="empty-state">
+        <svg width="32" height="32" viewBox="0 0 20 20" fill="none"><rect x="2" y="5" width="16" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M2 9h16" stroke="currentColor" stroke-width="1.5"/></svg>
+        <h3>No clients yet</h3>
+        <p>Add the first client account for this customer.</p>
+      </div>`;
+    }
+    return `<div class="table-wrap"><table>
+      <thead><tr>
+        <th>Company / Account</th>
+        <th>Primary Contact</th>
+        <th>Category</th>
+        <th>Type</th>
+        <th>Status</th>
+        <th style="width:80px;">Actions</th>
+      </tr></thead>
+      <tbody>${clients.map(r => `
+        <tr>
+          <td>
+            <a href="#" onclick="navigate('client-profile','${_esc(r.clientId)}');return false;"
+               style="color:var(--accent);font-weight:600;">${_esc(r.companyName)}</a>
+            ${r.accountName ? `<div style="font-size:11.5px;color:var(--text-muted);">${_esc(r.accountName)}</div>` : ''}
+            ${r.isReturning ? `<span class="badge badge-returning" style="font-size:10px;">Returning</span>` : ''}
+          </td>
+          <td>${_esc(r.primaryContact || '—')}</td>
+          <td>${r.category ? `<span class="badge badge-inactive">${_esc(r.category)}</span>` : '—'}</td>
+          <td>${r.type ? `<span class="badge badge-${(r.type||'').toLowerCase()}">${_esc(r.type)}</span>` : '—'}</td>
+          <td><span class="badge badge-${(r.status||'').toLowerCase()}">${_esc(r.status||'—')}</span></td>
+          <td>
+            <button class="btn btn-ghost btn-icon" onclick="ClientPage.openEdit('${_esc(r.clientId)}')">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9.5 2.5l2 2-7 7H2.5v-2l7-7z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+            </button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>`;
+  }
+
+  function _renderClientProfile(c) {
+    const canDel = CMS.user?.permissions?.canDelete;
+    const root = document.getElementById('profileRoot');
+
+    const fields = [
+      { label: 'Company Name',    val: c.companyName },
+      { label: 'Account Name',    val: c.accountName },
+      { label: 'Primary Contact', val: c.primaryContact },
+      { label: 'Secondary Contact',val: c.secondaryContact },
+      { label: 'Account Managers',val: c.accountManagers },
+      { label: 'Category',        val: c.category },
+      { label: 'Type',            val: c.type },
+      { label: 'Country / Region',val: c.countryRegion },
+    ];
+    const invoiceFields = [
+      { label: 'Name',  val: c.invoiceContactName },
+      { label: 'Role',  val: c.invoiceContactRole },
+      { label: 'Email', val: c.invoiceContactEmail },
+    ];
+
+    root.innerHTML = `
+      <!-- Breadcrumb -->
+      <div style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-muted);margin-bottom:16px;">
+        <a href="#" onclick="navigate('clients');return false;" style="color:var(--accent);">Clients</a>
+        <span>›</span>
+        <span style="color:var(--text-primary);font-weight:600;">${_esc(c.companyName)}</span>
+        ${c.accountName ? `<span>›</span><span style="color:var(--text-secondary);">${_esc(c.accountName)}</span>` : ''}
+      </div>
+
+      <!-- Header Card -->
+      <div class="section-card mb-4" style="margin-bottom:16px;">
+        <div style="padding:24px 28px;display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:18px;">
+            <div style="width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,#0ea5e9,#6366f1);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:white;flex-shrink:0;">
+              ${_esc((c.companyName||'?').charAt(0).toUpperCase())}
+            </div>
+            <div>
+              <div style="font-size:20px;font-weight:800;color:var(--text-primary);">${_esc(c.companyName)}</div>
+              ${c.accountName ? `<div style="font-size:13px;color:var(--text-secondary);margin-top:1px;">${_esc(c.accountName)}</div>` : ''}
+              <div style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono);margin-top:2px;">${_esc(c.clientId)}</div>
+              <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                <span class="badge badge-${(c.status||'').toLowerCase()}">${_esc(c.status||'Active')}</span>
+                ${c.isReturning ? `<span class="badge badge-returning">Returning Customer</span>` : ''}
+                ${c.type ? `<span class="badge badge-${(c.type||'').toLowerCase()}">${_esc(c.type)}</span>` : ''}
+                ${c.category ? `<span class="badge badge-inactive">${_esc(c.category)}</span>` : ''}
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-secondary btn-sm" onclick="ClientPage.openEdit('${_esc(c.clientId)}')">Edit</button>
+            ${canDel ? `<button class="btn btn-danger btn-sm" onclick="ClientPage.confirmDelete('${_esc(c.clientId)}','${_esc(c.companyName)}')">Delete</button>` : ''}
+          </div>
+        </div>
+      </div>
+
+      <!-- Detail Grid -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+        <div class="section-card">
+          <div class="section-header"><div class="section-title">Account Details</div></div>
+          <div style="padding:4px 0;">
+            ${fields.map(f => f.val ? `
+              <div style="display:flex;padding:10px 20px;border-bottom:1px solid var(--border-light);">
+                <div style="width:140px;font-size:11.5px;font-weight:600;color:var(--text-muted);flex-shrink:0;">${_esc(f.label)}</div>
+                <div style="font-size:13px;color:var(--text-primary);">${_esc(f.val)}</div>
+              </div>` : '').join('')}
+          </div>
+        </div>
+        <div class="section-card">
+          <div class="section-header"><div class="section-title">Invoice Contact</div></div>
+          <div style="padding:4px 0;">
+            ${invoiceFields.map(f => f.val ? `
+              <div style="display:flex;padding:10px 20px;border-bottom:1px solid var(--border-light);">
+                <div style="width:60px;font-size:11.5px;font-weight:600;color:var(--text-muted);flex-shrink:0;">${_esc(f.label)}</div>
+                <div style="font-size:13px;color:var(--text-primary);">${_esc(f.val)}</div>
+              </div>` : '').join('')}
+            ${!c.invoiceContactName && !c.invoiceContactEmail ? `
+              <div style="padding:20px;font-size:13px;color:var(--text-muted);text-align:center;">No invoice contact set.</div>` : ''}
+          </div>
+          ${c.notes ? `
+          <div class="section-header" style="border-top:1px solid var(--border);"><div class="section-title">Notes</div></div>
+          <div style="padding:14px 20px;font-size:13px;color:var(--text-secondary);line-height:1.6;">${_esc(c.notes)}</div>` : ''}
+        </div>
+      </div>
+
+      <!-- Audit Footer -->
+      <div class="section-card">
+        <div style="padding:14px 24px;display:flex;gap:24px;flex-wrap:wrap;">
+          <div><div style="font-size:10.5px;font-weight:700;letter-spacing:.6px;color:var(--text-muted);text-transform:uppercase;">Created</div>
+            <div style="font-size:12.5px;margin-top:2px;">${_fdate(c.createdAt)} by ${_esc(c.createdBy||'—')}</div></div>
+          <div><div style="font-size:10.5px;font-weight:700;letter-spacing:.6px;color:var(--text-muted);text-transform:uppercase;">Last Updated</div>
+            <div style="font-size:12.5px;margin-top:2px;">${_fdate(c.updatedAt)} by ${_esc(c.updatedBy||'—')}</div></div>
+        </div>
+      </div>`;
+  }
+
+  function _fdate(v) {
+    if (!v) return '—';
+    const d = new Date(v);
+    return isNaN(d) ? String(v) : d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+  }
+  function _esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+  return { loadCustomer, loadClient };
+})();
+</script>

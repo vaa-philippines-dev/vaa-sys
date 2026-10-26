@@ -1,0 +1,255 @@
+<script>
+// ═══════════════════════════════════════════════════════════════════════
+// PLAYBOOK — CUSTOMER ONBOARDING (full-page wizard)
+// ═══════════════════════════════════════════════════════════════════════
+// Walks through: Add Customer → Add Account → Add Service Request →
+// Assign VA → Accept VA → Start VA Connection, on one persistent page.
+//
+// This used to chain modals together, closing one and opening the next.
+// That turned out to be unreliable — Apps Script silently drops a
+// google.script.run call made from inside another call's success handler,
+// and the modal-close/reopen timing made that easy to hit by accident.
+// A full page sidesteps this: each step's form still comes from the exact
+// same builder functions the rest of the app uses (_custBuildForm,
+// _cliBuildForm, _reqBuildForm, the Assign VA / Accept / Start flows) —
+// nothing about how those forms work or validate has changed — they're
+// just rendered into this page's body instead of a modal, and their
+// existing submit functions advance the wizard afterward instead of
+// closing a modal.
+//
+// Steps 1-2 (Customer, Account) are required. Steps 3-6 can each be
+// skipped individually, or the whole flow stopped at any point - whatever
+// was already created stays created.
+// ═══════════════════════════════════════════════════════════════════════
+
+var PB_WIZARD_STEPS = [
+  { key: 'customer',  label: 'Add Customer',        required: true  },
+  { key: 'account',   label: 'Add Account',          required: true  },
+  { key: 'request',   label: 'Add Service Request',  required: false },
+  { key: 'assign',    label: 'Assign VA',            required: false },
+  { key: 'accept',    label: 'Accept / Connect VA',  required: false },
+  { key: 'start',     label: 'Start VA Connection',  required: false }
+];
+
+var _pbWizard = null; // null when no wizard is running
+
+// The single source of truth for "is the onboarding wizard actually
+// running right now" -- requires BOTH an active wizard object AND that
+// the user is actually on the wizard page. _pbWizard alone isn't enough:
+// if someone leaves the wizard mid-flow without properly exiting (closing
+// the tab, browser back/forward, navigating directly to a different page),
+// the object can be left behind in memory with active still true, even
+// though they're now doing something completely unrelated -- like a normal
+// Service Request creation, which would then incorrectly try to advance a
+// wizard step into a page that was never rendered. Also self-heals by
+// clearing the stale object so this check doesn't keep needing to fire.
+function _pbWizardIsActuallyActive() {
+  if (!_pbWizard || _pbWizard.active !== true) return false;
+  if (CMS.currentPage !== 'customer-onboarding') {
+    console.warn('[Wizard] Stale _pbWizard found while not on the wizard page -- clearing it.', _pbWizard);
+    _pbWizard = null;
+    return false;
+  }
+  return true;
+}
+
+function pbStartWizard() {
+  _pbWizard = {
+    active: true, stepIndex: 0,
+    customerId: null, customerName: '', clientId: null, requestId: null, connectionId: null
+  };
+  navigate('customer-onboarding');
+}
+
+function pbStopWizard() {
+  _pbWizard = null;
+  navigate('playbook');
+  showToast('Onboarding stopped — anything already created stays as-is.', 'info');
+}
+
+function pbSkipWizardStep() {
+  if (!_pbWizard) return;
+  _pbWizardGoToStep(_pbWizard.stepIndex + 1);
+}
+
+function _renderOnboardingPage(container) {
+  if (!_pbWizard) {
+    // Reached directly (a fresh tab load) rather than via pbStartWizard()
+    // in an already-running session — initialize fresh instead of
+    // bouncing back to Playbook.
+    _pbWizard = {
+      active: true, stepIndex: 0,
+      customerId: null, customerName: '', clientId: null, requestId: null, connectionId: null
+    };
+  }
+  container.innerHTML =
+    '<div class="section-card" style="margin-bottom:16px;padding:16px 20px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">' +
+        '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;" id="pbWizardSteps"></div>' +
+        '<div style="display:flex;gap:8px;">' +
+          '<button class="btn btn-ghost btn-sm" id="pbWizardSkipBtn" onclick="pbSkipWizardStep()">Skip this step</button>' +
+          '<button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="pbStopWizard()">Stop</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div id="pbWizardStepBody"></div>';
+  _pbWizardRenderCurrentStep();
+}
+
+function _pbWizardUpdateHeader() {
+  var stepsEl = document.getElementById('pbWizardSteps');
+  var skipBtn = document.getElementById('pbWizardSkipBtn');
+  if (!_pbWizard || !stepsEl) return;
+  stepsEl.innerHTML = PB_WIZARD_STEPS.map(function(s, i) {
+    var state = i < _pbWizard.stepIndex ? 'done' : (i === _pbWizard.stepIndex ? 'current' : 'upcoming');
+    var color = state === 'done' ? '#22C55E' : (state === 'current' ? '#3361AC' : '#CBD5E1');
+    return '<div style="display:flex;align-items:center;gap:5px;">' +
+      (i>0 ? '<div style="width:16px;height:1px;background:#E5E7EB;margin-right:5px;"></div>' : '') +
+      '<span style="width:8px;height:8px;border-radius:50%;background:'+color+';flex-shrink:0;"></span>' +
+      '<span style="font-size:12px;font-weight:'+(state==='current'?'700':'500')+';color:'+(state==='current'?'#111827':'#6B7280')+';white-space:nowrap;">'+s.label+'</span>' +
+    '</div>';
+  }).join('');
+  if (skipBtn) skipBtn.style.display = PB_WIZARD_STEPS[_pbWizard.stepIndex].required ? 'none' : '';
+}
+
+function _pbWizardGoToStep(idx) {
+  console.log('[Wizard] _pbWizardGoToStep called with idx=', idx, '| _pbWizard=', _pbWizard ? JSON.stringify(_pbWizard) : 'null');
+  if (!_pbWizardIsActuallyActive()) { console.log('[Wizard] ABORT: wizard is not actually active (either no _pbWizard, or not on the wizard page).'); return; }
+  if (idx >= PB_WIZARD_STEPS.length) {
+    var finishedCustomer = _pbWizard.customerName;
+    _pbWizard = null;
+    navigate('playbook');
+    showToast('Onboarding complete for ' + finishedCustomer + '.', 'success');
+    return;
+  }
+  _pbWizard.stepIndex = idx;
+  try {
+    _pbWizardRenderCurrentStep();
+  } catch (e) {
+    // Surface failures visibly rather than leaving the previous step's
+    // Save button stuck showing "Saving…" with nothing happening.
+    console.error('[Wizard] _pbWizardRenderCurrentStep threw:', e);
+    showToast('Could not load the next step: ' + e.message + ' — try Skip, or Stop and start again.', 'error');
+  }
+}
+
+function _pbWizardRenderCurrentStep() {
+  if (!_pbWizard) return;
+  _pbWizardUpdateHeader();
+  var body = document.getElementById('pbWizardStepBody');
+  if (!body) throw new Error('Wizard page container not found — try reopening onboarding from the Playbook page.');
+  var step = PB_WIZARD_STEPS[_pbWizard.stepIndex];
+
+  if (step.key === 'customer') {
+    body.innerHTML = '<div class="section-card">' + _custBuildForm(null) + '</div>';
+    setTimeout(function(){ var el = document.getElementById('f_customerName'); if (el) el.focus(); }, 60);
+
+  } else if (step.key === 'account') {
+    console.log('[Wizard] Rendering account step. customerId=', _pbWizard.customerId);
+    body.innerHTML = '<div class="loading-screen" style="height:200px;"><div class="loader-ring"></div></div>';
+    _cliEnsureContractsLoaded(function() {
+      console.log('[Wizard] _cliEnsureContractsLoaded callback fired, building account form.');
+      body.innerHTML = '<div class="section-card">' + _cliBuildForm(null, _pbWizard.customerId) + '</div>';
+    });
+
+  } else if (step.key === 'request') {
+    console.log('[Wizard] Rendering request step. customerId=', _pbWizard.customerId, '| clientId=', _pbWizard.clientId);
+    body.innerHTML = '<div class="loading-screen" style="height:200px;"><div class="loader-ring"></div></div>';
+    _ensureReqFormData(function() {
+      console.log('[Wizard] _ensureReqFormData callback fired, building request form.');
+      body.innerHTML = '<div class="section-card">' + _reqBuildForm(null, {}) + '</div>';
+      setTimeout(function() {
+        var custSel = document.getElementById('f_reqCustomer');
+        var custSearch = document.getElementById('f_reqCustomerSearch');
+        if (custSel) {
+          custSel.value = _pbWizard.customerId;
+          if (custSearch) custSearch.value = _pbWizard.customerName;
+          reqFormLoadClients(custSel);
+          setTimeout(function() {
+            var cliSel = document.getElementById('f_reqClient');
+            if (cliSel) cliSel.value = _pbWizard.clientId;
+          }, 250);
+        }
+      }, 100);
+    });
+
+  } else if (step.key === 'assign') {
+    if (!_pbWizard.requestId) { pbSkipWizardStep(); return; }
+    body.innerHTML = '<div class="loading-screen" style="height:200px;"><div class="loader-ring"></div></div>';
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (!res || !res.success) { showToast('Could not load the request.', 'error'); pbSkipWizardStep(); return; }
+        _reqProfileData = res.data; // the existing Assign VA builder reads from this global
+        body.innerHTML = '<div class="section-card" id="pbAssignVACard"></div>';
+        _pbRenderAssignVAIntoPage();
+      })
+      .withFailureHandler(function(err) { showToast(err.message, 'error'); pbSkipWizardStep(); })
+      .getVARequestDetail(_pbWizard.requestId);
+
+  } else if (step.key === 'accept') {
+    if (!_pbWizard.connectionId) { pbSkipWizardStep(); return; }
+    body.innerHTML =
+      '<div class="section-card" style="max-width:480px;">' +
+        '<div class="section-header"><div class="section-title">Accept / Connect VA</div></div>' +
+        '<p style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">Confirm the VA has accepted this connection.</p>' +
+        '<button class="btn btn-primary" onclick="_pbDoAccept()">Confirm Accepted</button>' +
+      '</div>';
+
+  } else if (step.key === 'start') {
+    if (!_pbWizard.connectionId) { pbSkipWizardStep(); return; }
+    body.innerHTML =
+      '<div class="section-card" style="max-width:480px;">' +
+        '<div class="section-header"><div class="section-title">Start VA Connection</div></div>' +
+        '<p style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">This closes the request as <strong>Won</strong> and marks the VA as started.</p>' +
+        '<div class="form-group"><label class="form-label">Actual Start Date</label>' +
+          '<input class="form-input" type="date" id="f_startDate" value="'+_todayStr()+'" /></div>' +
+        '<button class="btn btn-primary" onclick="reqDoMarkStarted(\''+_esc(_pbWizard.connectionId)+'\')">Confirm Started</button>' +
+      '</div>';
+  }
+}
+
+// Reuses reqOpenAssignVA's own VA-list-loading logic, but targets a fixed
+// card on the wizard page instead of opening a modal.
+function _pbRenderAssignVAIntoPage() {
+  var req = _reqProfileData;
+  var reqService = req && req.service ? req.service : '';
+  google.script.run
+    .withSuccessHandler(function (res) {
+      var card = document.getElementById('pbAssignVACard'); if (!card) return;
+      if (!res || !res.success) { card.innerHTML = '<div class="empty-state"><h3>Failed to load VAs.</h3></div>'; return; }
+      var allVAs = res.data || [];
+      var reqDept = req && req.department ? req.department : '';
+      var filteredVAs = reqDept ? allVAs.filter(function(v) { return (v.department||'').toLowerCase() === reqDept.toLowerCase(); }) : allVAs;
+      if (reqDept && filteredVAs.length === 0) filteredVAs = allVAs;
+      var sorted = filteredVAs.slice().sort(function(a,b){ return (a.vaName||'').localeCompare(b.vaName||''); });
+      card.innerHTML =
+        '<div class="section-header"><div class="section-title">Assign VA</div></div>' +
+        '<div class="form-group"><label class="form-label">Virtual Assistant <span class="required">*</span></label>' +
+          '<select class="form-select" id="f_assignVA"><option value="">Select a VA…</option>' +
+          sorted.map(function(v){ return '<option value="'+_esc(v.vaId)+'">'+_esc(v.vaName)+(v.department?' — '+_esc(v.department):'')+'</option>'; }).join('') +
+          '</select></div>' +
+        '<div class="form-group"><label style="display:flex;align-items:center;gap:8px;font-size:13px;"><input type="checkbox" id="f_isBuffer" style="width:15px;height:15px;" /> This is a buffer/backup VA</label></div>' +
+        '<div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="f_assignNotes" style="min-height:60px;"></textarea></div>' +
+        '<div id="assignVAErr" style="color:var(--danger);font-size:12.5px;margin-bottom:8px;"></div>' +
+        '<button class="btn btn-primary" id="assignVABtn" onclick="reqDoAssignVA(\''+_esc(_pbWizard.requestId)+'\')">Assign VA</button>';
+    })
+    .withFailureHandler(function() {
+      var card = document.getElementById('pbAssignVACard');
+      if (card) card.innerHTML = '<div class="empty-state"><h3>Failed to load VAs.</h3></div>';
+    })
+    .getVAs({});
+}
+
+function _pbDoAccept() {
+  _reqRequireAcceptPayment(_pbWizard.connectionId, _pbWizard.requestId, function(dateVal) {
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (!res || !res.success) { showToast((res&&res.error)||'Failed.', 'error'); return; }
+        showToast('VA accepted.', 'success');
+        _pbWizardGoToStep(_pbWizard.stepIndex + 1);
+      })
+      .withFailureHandler(function(err) { showToast(err.message, 'error'); })
+      .updateVAConnectionStatus(_pbWizard.connectionId, 'Accepted', dateVal);
+  });
+}
+</script>
