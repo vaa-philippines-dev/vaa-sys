@@ -20,6 +20,8 @@ One app with two areas on one database. It replaces the legacy Apps Script CMS s
     - additional hours, whether the VA will use a task tracker, and the (optional) tasks and tools
   - **Part 3, VA personality preference:** optional. Ten scenarios, each with four statements rated 1 (least preferred) to 5 (most preferred). The statements follow the DISC styles in the same order every time, so the lead's page shows a total per style. A customer who skips it can complete it later on the same link, even after the link's 14 days, and the lead's page shows it as not filled in yet with the link to copy.
 
+New here? Start with [Setup](#setup) and [Working together](#working-together). If you use Claude Code, it reads [`CLAUDE.md`](CLAUDE.md) on its own.
+
 Same stack as `va-management`: Next.js 16, React 19, Tailwind v4, shadcn, Prisma 7 with `@prisma/adapter-pg`, and Supabase Auth with Google.
 
 **One app, two looks.** Each area has its own sidebar layout and palette, scoped by a class in `app/globals.css`:
@@ -146,21 +148,82 @@ npm run db:apply -- prisma/sql/<file>.sql
 
 ## Setup
 
+You need Node.js 20 or later, access to the GitHub repo (`vaa-philippines-dev/vaa-sys`), and an `.env.local` from Neil (it is never committed).
+
+```bash
+git clone https://github.com/vaa-philippines-dev/vaa-sys.git
+```
+
 ```bash
 npm install
 ```
+
+`npm install` also generates the Prisma client into `src/generated/prisma`.
+
+Put these in `.env.local` at the repo root:
+
+| Variable | What it is |
+|---|---|
+| `DATABASE_URL` | Supabase Postgres, pooled connection (the app's runtime) |
+| `DIRECT_URL` | Supabase Postgres, direct connection (Prisma CLI and `db:apply`) |
+| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | the Supabase project shared with va-management, for Google sign-in |
+| `NEXT_PUBLIC_SITE_URL` | the app's address; onboarding links are built from it (`http://localhost:3001` locally) |
+| `DEV_AUTH_BYPASS_EMAIL` | optional, dev only: signs you in as this Workforce user without Google |
 
 ```bash
 npm run dev
 ```
 
-The app runs at http://localhost:3001. Locally, `DEV_AUTH_BYPASS_EMAIL` in `.env.local` signs you in as that user without Google (dev only).
+The app runs at http://localhost:3001. To get in, your Google account (or the bypass email) must be an active user in Workforce and either a Workforce admin with an `@vaaphilippines.com` email or on the Access page (see [Who lands where](#who-lands-where)).
+
+**The database is shared with va-management.** Your local app talks to the same database as everyone else, so data you create locally is real data. Don't run `prisma migrate` or `db push`; see [Database](#database).
 
 Before real Google sign-in works, add the callback URL in Supabase → Authentication → URL Configuration → Redirect URLs:
 - `http://localhost:3001/callback`
 - `https://<deployed-domain>/callback`
 
 Set `NEXT_PUBLIC_SITE_URL` to the deployed address, because onboarding links are built from it.
+
+### Scripts
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | dev server on port 3001 |
+| `npm run typecheck` | TypeScript check |
+| `npm run lint` | ESLint |
+| `npm run build` | production build |
+| `npm run db:sql` | print SQL for the whole Prisma schema, as a starting point for a new `prisma/sql/` file |
+| `npm run db:apply -- <file>` | apply one reviewed SQL file to the shared database |
+
+There is no automated test suite yet; check changes with `typecheck`, `lint` and by using the page.
+
+### Where things are
+
+| Folder | Holds |
+|---|---|
+| `app/(cms)/` | Customer Management pages, each with its Server Actions in `actions.ts` |
+| `app/(lms)/` | Lead Management pages |
+| `app/(app)/` | the admin area picker and the `/waiting` page |
+| `app/onboarding/[token]/` | the public onboarding form |
+| `components/` | UI by area (`cms`, `lms`, `customers`, `leads`, `onboarding`...); `components/ui` is shadcn |
+| `lib/` | auth, permissions, scope, status rules, activity log and data access. `*-fields.ts` files are client-safe (labels, zod schemas); the rest use Prisma and are server-only |
+| `prisma/` | `schema.prisma` (the `vaa_sys` schema only) and the hand-applied SQL files in `prisma/sql/` |
+| `proxy.ts` | Next.js 16 route protection (what `middleware.ts` used to be) |
+| `legacy/vaa-cms-gas/` | the old Apps Script CMS, read-only reference |
+| `docs/legacy-cms.md` | notes on how the legacy CMS works, for rebuilding it |
+
+## Working together
+
+- `main` is the shared branch. Work on your own branch and open a pull request; don't push to `main` directly.
+- Pull `main` before you start, and before you number a new SQL file: two branches must not both add `007_….sql`.
+- SQL files are applied to the shared database by hand, after review, with `npm run db:apply`. Mention in the PR when one needs applying.
+- Keep this README current in the same PR when pages, roles, statuses, tables or setup change.
+
+### With Claude Code
+
+[`CLAUDE.md`](CLAUDE.md) is loaded by Claude Code automatically. It holds the commands, the shared-database rules and the code patterns (permissions, scope, Server Actions, activity log), so Claude follows the same rules for both of us. If you find yourself correcting Claude on something about this project, add it to `CLAUDE.md` in your PR.
+
+`.claude/` is gitignored, so local settings stay on your machine. For Claude's preview browser, create `.claude/launch.json` as shown in `CLAUDE.md`.
 
 ## Next phases (from the Oct 21 meeting)
 
