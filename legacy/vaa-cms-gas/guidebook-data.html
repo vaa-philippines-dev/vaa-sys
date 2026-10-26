@@ -1,0 +1,353 @@
+<script>
+// ── CMS Guidebook ─────────────────────────────────────────────────────────
+// HOW TO UPDATE: Find the module key below, update the section text, bump
+// `version` to today\'s date (YYYY-MM-DD). The ℹ Guide button in each
+// module header renders from this file — no rebuild needed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+window.CMS_GUIDEBOOK = {
+
+  // ── Customers & Accounts ─────────────────────────────────────────────────
+  // Updated: 2026-07-08 — Status auto-activation, Pending default, CS assign
+  //          hover edit, cascade rules, create → account flow
+  'customers-accounts': {
+    title:   'Customers & Accounts',
+    version: '2026-07-08',
+    sections: [
+      {
+        heading: 'Overview',
+        content:
+          '<p>The <strong>Customers &amp; Accounts</strong> module manages all client relationships. ' +
+          'It is split into two sub-tabs that work together:</p>' +
+          '<ul>' +
+            '<li><strong>Customers</strong> — the top-level company or individual paying for services. ' +
+            'One Customer can have multiple Accounts under it.</li>' +
+            '<li><strong>Accounts</strong> — a specific service engagement under a Customer. ' +
+            'VA Connections, Service Requests, Meetings, and Inquiries are all attached at this level.</li>' +
+          '</ul>'
+      },
+      {
+        heading: 'Default View & Filters',
+        items: [
+          { label: 'Default status', text: 'Both lists default to <strong>Active</strong> records sorted by Date Created (newest first). Use the status tab bar to switch to Pending, Paused, Inactive, Terminated, or Cancelled.' },
+          { label: 'Search', text: 'Filters by company name, account name, or assigned CS Specialist in real time.' },
+          { label: 'Sorting', text: 'Click any column header to sort; click again to reverse. Default is Date Created descending.' }
+        ]
+      },
+      {
+        heading: 'Status Lifecycle',
+        content:
+          '<p>New Customers and Accounts are created with status <strong>Pending</strong> by default. ' +
+          'The system automatically moves them to <strong>Active</strong> when either of these events occurs:</p>' +
+          '<ul>' +
+            '<li>A <strong>New</strong> service request linked to this account is <strong>closed Won</strong>.</li>' +
+            '<li>A VA Connection linked to this account reaches <strong>Started</strong> status.</li>' +
+          '</ul>' +
+          '<p>You never need to manually set status to Active after onboarding — the system does it for you.</p>'
+      },
+      {
+        heading: 'Status Management (Manual)',
+        content:
+          '<p>Status can also be changed manually from the Customer or Account profile hero card:</p>' +
+          '<table style="width:100%;border-collapse:collapse;font-size:13px;">' +
+            '<thead><tr>' +
+              '<th style="text-align:left;padding:6px 10px;background:var(--surface-2);border:1px solid var(--border);">Current Status</th>' +
+              '<th style="text-align:left;padding:6px 10px;background:var(--surface-2);border:1px solid var(--border);">Available Actions</th>' +
+            '</tr></thead>' +
+            '<tbody>' +
+              '<tr><td style="padding:6px 10px;border:1px solid var(--border);">Pending / Active</td><td style="padding:6px 10px;border:1px solid var(--border);">⏸ Pause &nbsp;·&nbsp; ✕ Terminate</td></tr>' +
+              '<tr><td style="padding:6px 10px;border:1px solid var(--border);">Paused</td><td style="padding:6px 10px;border:1px solid var(--border);">▶ Resume &nbsp;·&nbsp; ✕ Terminate</td></tr>' +
+              '<tr><td style="padding:6px 10px;border:1px solid var(--border);">Terminated / Cancelled</td><td style="padding:6px 10px;border:1px solid var(--border);">↺ Reactivate</td></tr>' +
+            '</tbody>' +
+          '</table>' +
+          '<p style="margin-top:10px;"><strong>⛔ Blocking rule:</strong> A Customer with active VA Connections cannot be Paused or Terminated. End all VA connections first via the Account → VA Connections tab.</p>' +
+          '<p><strong>Cascade:</strong> Pausing or Terminating a Customer also updates all its non-terminated Accounts. You will be asked to confirm with an effective date.</p>'
+      },
+      {
+        heading: 'Adding a Customer',
+        content:
+          '<p>Click <strong>+ Add Customer</strong>. Required fields: Customer Name, Payment Date (or check No Payment Yet). ' +
+          'Status defaults to <strong>Pending</strong>. After saving, the Add Account form opens automatically so you can set up the first account immediately.</p>'
+      },
+      {
+        heading: 'Adding an Account',
+        content:
+          '<p>Click <strong>+ Add Account</strong>. Select the parent Customer. Key fields:</p>' +
+          '<ul>' +
+            '<li><strong>Company Name</strong> — the account company (can differ from customer for subsidiaries).</li>' +
+            '<li><strong>Department</strong> — used for grouping in the Customer/Account Report.</li>' +
+            '<li><strong>Primary &amp; Secondary Contacts</strong> — contact emails. Check <strong>Is Focal Person</strong> on the main recipient for birthday/anniversary emails.</li>' +
+            '<li><strong>Status</strong> — automatically set to Pending on creation.</li>' +
+          '</ul>'
+      },
+      {
+        heading: 'Assigning a CS Specialist',
+        items: [
+          { label: 'From the Customers table', text: 'Hover over the CS Specialist cell in any table row — a pencil (✎) button appears. Click it to open the assign modal and select or change the specialist.' },
+          { label: 'From the Customer Profile', text: 'Use the Edit button in the hero card to change the AssignedSpecialist field.' },
+          { label: 'From the Playbook', text: 'If no specialist is assigned, a "+" button appears on hover in the CS Assigned column of the Playbook table.' }
+        ]
+      },
+      {
+        heading: 'Customer Profile',
+        items: [
+          { label: 'Overview tab', text: 'Summary of all linked Accounts. Click any account row to open the Account Profile.' },
+          { label: 'Change History tab', text: 'Full audit trail — every field change with old/new values, who made it, and when.' }
+        ]
+      },
+      {
+        heading: 'Account Profile',
+        items: [
+          { label: 'Overview', text: 'Account details, contact information (focal person highlighted), and active VA connection summary.' },
+          { label: 'VA Connections tab', text: 'All VA assignments — status (Started / Paused / Cancelled), start dates, hours, and connection type.' },
+          { label: 'Service Requests tab', text: 'All service requests for this account — type, department, status, target start date.' },
+          { label: 'Inquiries tab', text: 'All concerns and inquiries. Status: Open → Needs Response → Resolved.' },
+          { label: 'Change History tab', text: 'Account-level audit trail.' }
+        ]
+      },
+      {
+        heading: 'Tips & Best Practices',
+        items: [
+          { label: 'Pending → Active is automatic', text: 'Do not manually set status to Active. The system does it when a New SR is won or a VA connection starts. Use Pending for all new records.' },
+          { label: 'Always set the focal person', text: 'The focal person flag determines who receives birthday and anniversary notification emails for assigned VAs.' },
+          { label: 'Use Accounts for separate service lines', text: 'If a customer has VAs across different departments, create separate Accounts so SRs and meetings are tracked independently.' },
+          { label: 'Reactivate, do not re-create', text: 'Use ↺ Reactivate on terminated records to preserve the full history (VA connections, service requests, meetings).' }
+        ]
+      }
+    ]
+  },
+
+  // ── CS Specialists ────────────────────────────────────────────────────────
+  // Updated: 2026-07-08 — Full module guide
+  'specialists': {
+    title:   'CS Specialists',
+    version: '2026-07-08',
+    sections: [
+      {
+        heading: 'Overview',
+        content:
+          '<p>The <strong>CS Specialists</strong> module manages the CS team — the people responsible for client relationships, meeting coordination, and service delivery oversight. ' +
+          'Each specialist is identified by a <strong>unique email address</strong> that links them to their assigned customers, submitted service requests, and sent notification emails throughout the system.</p>' +
+          '<p>Two roles exist: <strong>CS Specialist</strong> (manages a portfolio of customers) and <strong>CS Manager</strong> (oversight role, visible in the same list).</p>'
+      },
+      {
+        heading: 'The Specialist List',
+        items: [
+          { label: 'Columns', text: '<strong>Name</strong> and email — the unique identifier. <strong>Role</strong> badge (CS Specialist or CS Manager). <strong>Status</strong> (Active or Inactive). <strong>Customers</strong> — live count of assigned customers. <strong>Backup</strong> — the specialist who covers when they\'re unavailable.' },
+          { label: 'Clicking a row', text: 'Opens the Specialist Profile, showing their full portfolio of assigned customers with account details and service request history.' }
+        ]
+      },
+      {
+        heading: 'Adding a New Specialist',
+        content:
+          '<p>Click <strong>+ Add Specialist</strong> in the top-right corner. Enter:</p>' +
+          '<ul>' +
+            '<li><strong>Full Name</strong> — display name used throughout the system.</li>' +
+            '<li><strong>Role</strong> — CS Specialist or CS Manager.</li>' +
+            '<li><strong>Email Address</strong> — the unique identifier. This email is used to link the specialist to customer assignments, service requests they submit, and emails they send. <strong>Choose carefully</strong> — this is immutable after creation without a formal transition.</li>' +
+          '</ul>' +
+          '<p>The new specialist will appear immediately and can be assigned to customers via the Customers module or the Playbook.</p>'
+      },
+      {
+        heading: 'Reassigning a Portfolio (Specialist Transition)',
+        content:
+          '<p>When a CS Specialist leaves or transfers their portfolio to someone else, use the <strong>↔ Reassign</strong> button on their row. This is the correct process — do not manually edit customer records one by one.</p>' +
+          '<p>The Reassign flow:</p>' +
+          '<ol style="margin-left:18px;line-height:1.9;font-size:13px;">' +
+            '<li>The <strong>outgoing specialist is deactivated</strong> — their account remains in the system as Inactive for historical reference.</li>' +
+            '<li>You either <strong>create a new specialist</strong> (enter name, email, role) or <strong>reactivate an existing inactive one</strong> (select from the dropdown).</li>' +
+            '<li>All customers assigned to the outgoing specialist\'s email are <strong>automatically reassigned</strong> to the incoming specialist\'s email.</li>' +
+            '<li>A log entry records the full transition with timestamp, actor, and count of customers transferred.</li>' +
+          '</ol>'
+      },
+      {
+        heading: 'Email as Identifier — Critical Rule',
+        content:
+          '<p>The specialist\'s <strong>email address</strong> is the system identifier — not their name. This distinction matters when the same email is reused:</p>' +
+          '<ul>' +
+            '<li>If Kyle used <code>cs@company.com</code> and submitted service requests, those records are permanently associated with Kyle under that email at that point in time.</li>' +
+            '<li>If Kyle leaves and Abby takes over with the <strong>same email</strong> (<code>cs@company.com</code>), historical records from Kyle\'s tenure are <strong>not changed</strong>. They still show Kyle\'s name as the actor.</li>' +
+            '<li>Going forward, new service requests submitted by Abby under that email will be logged as Abby.</li>' +
+            '<li>The transition log records exactly when the handover happened so there is no ambiguity.</li>' +
+          '</ul>' +
+          '<p>Best practice: assign a <strong>personal email</strong> to each specialist rather than a shared role address. This avoids identity ambiguity entirely.</p>'
+      },
+      {
+        heading: 'Reactivating an Inactive Specialist',
+        content:
+          '<p>If a specialist left and returns, use <strong>↔ Reassign</strong> on the current holder of that portfolio and select the returning specialist from the <em>"Reactivate an existing inactive specialist"</em> dropdown. ' +
+          'Their User account is reactivated, and customers are transferred to them. No duplicate accounts are created.</p>'
+      },
+      {
+        heading: 'Backup Specialist',
+        content:
+          '<p>Each specialist can have a <strong>Backup</strong> — another team member who covers their portfolio when they are unavailable (e.g., leave, illness). ' +
+          'Set the backup from the Specialist Profile. The backup is shown in the specialist list table and in the specialist\'s profile card. ' +
+          'Backup coverage is informational — customer assignment does not change; the backup just knows to monitor.</p>'
+      },
+      {
+        heading: 'Assigning Customers',
+        items: [
+          { label: 'From the Specialist page', text: 'Click <strong>+ Customer</strong> on any specialist row to open a modal showing all unassigned customers. Check the ones to assign and click Save.' },
+          { label: 'From the Customers table', text: 'Hover over the CS Specialist cell in any customer row — a pencil (✎) button appears to change the assignment.' },
+          { label: 'From the Playbook', text: 'If no specialist is assigned to an account, a "+" button appears on hover in the CS Assigned column to assign one.' },
+          { label: 'On customer creation', text: 'The CS Specialist field is available in the Add/Edit Customer form.' }
+        ]
+      },
+      {
+        heading: 'Tips & Best Practices',
+        items: [
+          { label: 'Never delete specialists', text: 'Deactivate via Reassign instead. Deleting breaks historical links to service requests, log entries, and assignment records.' },
+          { label: 'Use personal emails', text: 'One email per person avoids ambiguity when the same role email is used by multiple people over time.' },
+          { label: 'Run transitions promptly', text: 'When a specialist leaves, run the Reassign flow on the same day so their customers are covered without delay. The system shows 0 customers for inactive specialists, making it easy to spot unmanaged portfolios.' },
+          { label: 'Set backups proactively', text: 'All specialists should have a backup assigned. This is especially important during handover periods.' }
+        ]
+      }
+    ]
+  }
+
+,
+
+  // ── Service Requests ─────────────────────────────────────────────────────
+  // Updated: 2026-07-08 — Full module guide
+  'va-requests': {
+    title:   'Service Requests',
+    version: '2026-07-08',
+    sections: [
+      {
+        heading: 'Overview',
+        content:
+          '<p>The <strong>Service Requests</strong> module is the central ticketing system for all VA staffing actions. ' +
+          'Each request represents a formal ask — to hire a new VA, add more hours, find a replacement, and so on. ' +
+          'Requests drive the VA Connection workflow: a New request that is closed Won automatically activates the linked Account and Customer.</p>'
+      },
+      {
+        heading: 'Request Types',
+        items: [
+          { label: 'New', text: 'A new VA assignment for an account that does not yet have a VA. <strong>Closing a New request as Won automatically moves the linked Account and Customer from Pending → Active.</strong>' },
+          { label: 'Additional', text: 'Adding a second (or third) VA to an account that already has one. Does not trigger auto-activation since the account is already Active.' },
+          { label: 'Replacement', text: 'Replacing a departing or underperforming VA on an existing connection. Links to the specific VA Connection being replaced via the "Replacement For" field.' },
+          { label: 'Reliever', text: 'A temporary VA to cover absence or leave for an existing VA. Has a defined end date.' },
+          { label: 'Hours / Schedule Change', text: 'Changing the hours or schedule of an existing VA Connection. These requests are handled via the dedicated Hours & Schedule Changes module — not from here.' }
+        ]
+      },
+      {
+        heading: 'Default View & Filters',
+        items: [
+          { label: 'Open tab (default)', text: 'Shows all requests that are not yet Closed Won or Closed Lost. This is the primary working view for the team.' },
+          { label: 'Type tabs', text: 'Filter by request type (New, Additional, Replacement, Reliever) using the tab bar above the list.' },
+          { label: 'Date range', text: 'Use the preset pills (This Week, This Month, Last 3 Months, All Time) or set a custom From/To date range to narrow the list.' },
+          { label: 'Search', text: 'Searches by request ID, client name, customer name, department, and type.' }
+        ]
+      },
+      {
+        heading: 'Creating a Request',
+        content:
+          '<p>Click <strong>+ New Request</strong>. Key fields:</p>' +
+          '<ul>' +
+            '<li><strong>Type</strong> — New / Additional / Replacement / Reliever (required).</li>' +
+            '<li><strong>Customer &amp; Account</strong> — the client the VA will work for (required).</li>' +
+            '<li><strong>Department</strong> — used for grouping in the Customer/Account Report.</li>' +
+            '<li><strong>Service</strong> — the specific type of work (e.g. Administrative, Marketing).</li>' +
+            '<li><strong>Hours</strong> and <strong>Schedule Type</strong> — hours per week and when the VA is expected to work.</li>' +
+            '<li><strong>Target Start Date</strong> — when the client wants the VA to begin. Also used as the work-start anchor in the Playbook.</li>' +
+            '<li><strong>Seller Onboarding Date</strong> — the date onboarding formally began (used in the Playbook).</li>' +
+          '</ul>'
+      },
+      {
+        heading: 'Request Status Flow',
+        content:
+          '<p>Each request moves through a defined status progression:</p>' +
+          '<ol style="margin-left:18px;line-height:2;font-size:13px;">' +
+            '<li><strong>Open</strong> — newly created, needs to be actioned.</li>' +
+            '<li><strong>In Progress</strong> — a VA is being identified or onboarded.</li>' +
+            '<li><strong>Pending Approval</strong> — waiting for client or internal sign-off.</li>' +
+            '<li><strong>Closed Won</strong> — VA successfully placed. <em>Triggers auto-activation of Pending Account/Customer.</em></li>' +
+            '<li><strong>Closed Lost</strong> — request cancelled, no placement made. Open VA connections linked to this request are cancelled automatically.</li>' +
+          '</ol>'
+      },
+      {
+        heading: 'Request Detail Modal',
+        items: [
+          { label: 'Opening', text: 'Click any row in the table to open the full detail view for that request.' },
+          { label: 'Editing', text: 'Click Edit in the detail modal to update any field. Changes are logged in the Change History.' },
+          { label: 'Closing', text: 'Use the Close Won or Close Lost buttons to finalize a request. Closing Won is permanent and triggers status cascades.' },
+          { label: 'Customer / Account display', text: 'The modal shows the resolved customer name and account name — not raw IDs. If you see an ID instead of a name, the linked record may have been deleted.' }
+        ]
+      },
+      {
+        heading: 'Tips & Best Practices',
+        items: [
+          { label: 'One request per placement', text: 'Create a separate request for each VA placement even if they are for the same account. This keeps the audit trail clean and allows each to be tracked independently.' },
+          { label: 'Set the seller onboarding date', text: 'This date is visible in the Playbook and is used to track how long an account has been in the pipeline. Set it as soon as onboarding begins.' },
+          { label: 'Use Hours/Schedule Changes for existing VAs', text: 'Do not create a new Service Request to change an existing VA\'s hours — use the Hours & Schedule Changes module instead.' },
+          { label: 'Close Lost promptly', text: 'Closing a request as Lost cancels open VA connections linked to it. Do this as soon as a placement falls through so the account data stays accurate.' }
+        ]
+      }
+    ]
+  },
+
+  // ── Hours / Schedule Changes ──────────────────────────────────────────────
+  // Updated: 2026-07-08 — Full module guide
+  'hours-schedule': {
+    title:   'Hours & Schedule Changes',
+    version: '2026-07-08',
+    sections: [
+      {
+        heading: 'Overview',
+        content:
+          '<p>The <strong>Hours &amp; Schedule Changes</strong> module is the dedicated tool for modifying an existing VA Connection\'s hours, schedule, or connection type. ' +
+          'It is completely separate from the Service Requests module — no new SR is created here. ' +
+          'All changes are logged to an audit trail attached to the VA Connection.</p>' +
+          '<p>Only <strong>Started</strong> and <strong>Paused</strong> connections are available in this module.</p>'
+      },
+      {
+        heading: 'Selecting a Connection',
+        content:
+          '<p>The left panel shows all active VA connections. Use the search box to filter by VA name, customer, or account name. ' +
+          'Click any row to load that connection\'s current state and change log in the right panel.</p>' +
+          '<p>Each connection card shows: VA name, customer/account, status badge, connection type, and current hours per week.</p>'
+      },
+      {
+        heading: 'Change Types',
+        items: [
+          { label: 'Hours Update', text: 'Change the number of hours per week and/or the hours type (Fixed, Flexible, Daily, Project Based). Also allows changing the Connection Type (Regular, Project Based, Buffer) in the same action.' },
+          { label: 'Schedule Change', text: 'Change the schedule type (Fixed, Flexible, Shifting) and the specific days the VA works (e.g. Mon–Fri, alternating days).' },
+          { label: 'Connection Type Change', text: 'Switch between Regular and Project Based. When switching to Project Based, use the "Log Project Hours" option to track hours consumed against the project.' },
+          { label: 'Limited Period', text: 'Override the VA\'s hours for a specific date range. Example: reduce to 4 hours per week from June 2 to June 30 due to a client hold. After the period ends, the original hours are still in the system — a new change must be applied to restore them.' },
+          { label: 'Log Project Hours', text: 'For Project Based connections only. Adds a log entry recording how many hours were completed and a brief description of the work. These entries accumulate to show the full history of hours consumed on the project.' }
+        ]
+      },
+      {
+        heading: 'Applying a Change',
+        content:
+          '<ol style="margin-left:18px;line-height:1.9;font-size:13px;">' +
+            '<li>Select the VA Connection from the left panel.</li>' +
+            '<li>Choose the <strong>Change Type</strong> from the dropdown.</li>' +
+            '<li>Set the <strong>Effective Date</strong> — defaults to today, can be backdated.</li>' +
+            '<li>Fill in the relevant fields that appear for the selected change type.</li>' +
+            '<li>Add optional <strong>Notes</strong> to explain the reason for the change.</li>' +
+            '<li>Click <strong>Apply Change</strong>. The connection is updated immediately and the change is logged.</li>' +
+          '</ol>'
+      },
+      {
+        heading: 'Change History',
+        content:
+          '<p>Every change applied through this module is recorded in the <strong>Change History</strong> section below the form. ' +
+          'Each log entry shows: change type, effective date, who made the change, what changed (before/after values), and any notes. ' +
+          'Project hours entries show the hours logged and description, building a running total of project consumption.</p>'
+      },
+      {
+        heading: 'Tips & Best Practices',
+        items: [
+          { label: 'Always set the effective date', text: 'Backdate changes to when they actually took effect, not when you entered them. This keeps the history accurate for reporting and audits.' },
+          { label: 'Limited Period vs permanent change', text: 'Use Limited Period for temporary adjustments (e.g. reduced hours during a trial or busy season). Use Hours Update for permanent changes that apply indefinitely.' },
+          { label: 'Project hours logging', text: 'For project-based VAs, log hours as work is completed rather than all at once at the end. This gives the CS team visibility into project progress in real time.' },
+          { label: 'Do not use Service Requests for this', text: 'Hours and schedule changes should always be done here, not by creating a new SR. Service Requests are for new placements only.' }
+        ]
+      }
+    ]
+  }
+
+};
+</script>

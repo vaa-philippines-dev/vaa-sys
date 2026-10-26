@@ -21,12 +21,21 @@ datasource db {
 
 // Who may use which part of vaa-sys. va-management's SUPER_ADMIN and
 // SYSTEM_ADMIN accounts are admins without a row here; everyone else needs
-// one (and an active va-management account).
+// one (and an active va-management account). The roles are the legacy
+// CMS's; what each may do lives in lib/permissions.ts.
 enum AccessRole {
   ADMIN
   CS_MANAGER
   CUSTOMER_SPECIALIST
   LEAD_MANAGER
+  SERVICE_MANAGER
+  HR_SPECIALIST
+  HR_MANAGER
+  ACCOUNTING
+  RECRUITMENT_SPECIALIST
+  TRAINING_MANAGER
+  EXECUTIVE
+  EXECUTIVE_SUPPORT
 
   @@schema("vaa_sys")
 }
@@ -35,6 +44,9 @@ model AccessUser {
   id           String     @id @default(cuid())
   email        String     @unique
   role         AccessRole
+  // A Service Manager's department: a public.departments id (Workforce's
+  // service departments), read with raw SQL. Unused for other roles.
+  departmentId String?    @map("department_id")
   isActive     Boolean    @default(true) @map("is_active")
   addedByEmail String     @map("added_by_email")
   createdAt    DateTime   @default(now()) @map("created_at")
@@ -44,13 +56,77 @@ model AccessUser {
   @@schema("vaa_sys")
 }
 
+// ── Settings ─────────────────────────────────────────────────────
+
+// The legacy CMS "Settings" tab: short lookup lists an admin maintains.
+// category is one of SETTING_CATEGORIES in lib/settings-fields.ts (text, so
+// a later module can add a list without an enum migration). Departments and
+// services are not here: they come from Workforce (public.departments and
+// public.skills).
+model SettingOption {
+  id        String   @id @default(cuid())
+  category  String
+  value     String
+  label     String
+  sortOrder Int      @default(0) @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
+  // CountryRegion only: the IANA time zone, e.g. Asia/Jerusalem.
+  timezone  String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  accountsByCategory      Account[]           @relation("AccountCategory")
+  accountsByType          Account[]           @relation("AccountType")
+  accountsByCountryRegion Account[]           @relation("AccountCountryRegion")
+  customerStatusLogs      CustomerStatusLog[]
+  accountStatusLogs       AccountStatusLog[]
+
+  @@unique([category, value])
+  @@index([category, sortOrder])
+  @@map("setting_options")
+  @@schema("vaa_sys")
+}
+
+// ── Activity log ─────────────────────────────────────────────────
+
+// One generic audit trail for every module (legacy ActivityLogs). Written
+// through logActivity() in lib/activity.ts, in the same transaction as the
+// change. entityId is the record's id; customerId groups a row under its
+// customer so a customer's page and a CS Specialist's scope can find it.
+// No foreign keys: the log outlives what it describes.
+model ActivityLog {
+  id            String    @id @default(cuid())
+  entityType    String    @map("entity_type")
+  entityId      String    @map("entity_id")
+  entityLabel   String?   @map("entity_label")
+  customerId    String?   @map("customer_id")
+  action        String
+  field         String?
+  oldValue      String?   @map("old_value")
+  newValue      String?   @map("new_value")
+  notes         String?
+  actorEmail    String    @map("actor_email")
+  actorName     String?   @map("actor_name")
+  // When it took effect, if backdated; createdAt is when it was recorded.
+  effectiveDate DateTime? @map("effective_date")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([entityType, entityId, createdAt])
+  @@index([customerId, createdAt])
+  @@index([createdAt])
+  @@index([actorEmail, createdAt])
+  @@map("activity_logs")
+  @@schema("vaa_sys")
+}
+
 // ── Customers ────────────────────────────────────────────────────
 
-// Same five statuses as the legacy Apps Script CMS.
+// The legacy Apps Script CMS's six statuses.
 enum CustomerStatus {
   PENDING
   ACTIVE
   PAUSED
+  INACTIVE
   CANCELLED
   TERMINATED
 
@@ -61,44 +137,109 @@ enum CustomerStatus {
 // creates the row (status PENDING) and Customer Management takes it from
 // there. customerCode keeps the legacy CMS format (CUST_ + 12 hex).
 model Customer {
-  id              String         @id @default(cuid())
-  customerCode    String         @unique @map("customer_code")
-  name            String
-  email           String?
-  status          CustomerStatus @default(PENDING)
-  statusChangedAt DateTime       @default(now()) @map("status_changed_at")
-  notes           String?
-  createdById     String?        @map("created_by_id")
-  createdByEmail  String         @map("created_by_email")
-  createdAt       DateTime       @default(now()) @map("created_at")
-  updatedAt       DateTime       @updatedAt @map("updated_at")
+  id                      String          @id @default(cuid())
+  customerCode            String          @unique @map("customer_code")
+  name                    String
+  email                   String?
+  status                  CustomerStatus  @default(PENDING)
+  // When the current status took effect (backdated if the change was).
+  statusChangedAt         DateTime        @default(now()) @map("status_changed_at")
+  notes                   String?
+  // The CS Specialist who owns this customer, by work email (lowercase).
+  assignedSpecialistEmail String?         @map("assigned_specialist_email")
+  // First payment: a date, or "no payment yet".
+  paymentDate             DateTime?       @map("payment_date") @db.Date
+  noPaymentYet            Boolean         @default(true) @map("no_payment_yet")
+  terminationCount        Int             @default(0) @map("termination_count")
+  reactivationCount       Int             @default(0) @map("reactivation_count")
+  // Pending review: a Pause/Terminate/Cancel by anyone but a CS Manager or
+  // admin applies at once and is flagged here until a CS Manager confirms
+  // it or cancels it (which puts statusBeforeReview back).
+  reviewAction            CustomerStatus? @map("review_action")
+  statusBeforeReview      CustomerStatus? @map("status_before_review")
+  reviewRequestedByEmail  String?         @map("review_requested_by_email")
+  reviewRequestedAt       DateTime?       @map("review_requested_at")
+  reviewReason            String?         @map("review_reason")
+  createdById             String?         @map("created_by_id")
+  createdByEmail          String          @map("created_by_email")
+  createdAt               DateTime        @default(now()) @map("created_at")
+  updatedAt               DateTime        @updatedAt @map("updated_at")
 
   statusLogs      CustomerStatusLog[]
   onboardingLinks OnboardingLink[]
   submissions     OnboardingSubmission[]
   accounts        Account[]
   tickets         Ticket[]
+  takeovers       CustomerTakeover[]
+  notesLog        CustomerAccountNote[]
 
   @@index([name])
   @@index([status])
+  @@index([assignedSpecialistEmail])
   @@map("customers")
   @@schema("vaa_sys")
 }
 
 // Every status change, including the first one (fromStatus null = created).
 model CustomerStatusLog {
-  id             String          @id @default(cuid())
-  customerId     String          @map("customer_id")
-  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  fromStatus     CustomerStatus? @map("from_status")
-  toStatus       CustomerStatus  @map("to_status")
-  reason         String?
-  changedById    String?         @map("changed_by_id")
-  changedByEmail String          @map("changed_by_email")
-  changedAt      DateTime        @default(now()) @map("changed_at")
+  id                  String          @id @default(cuid())
+  customerId          String          @map("customer_id")
+  customer            Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  fromStatus          CustomerStatus? @map("from_status")
+  toStatus            CustomerStatus  @map("to_status")
+  reason              String?
+  // Terminated/Cancelled: the reason from Settings (TerminationReason).
+  terminationReasonId String?         @map("termination_reason_id")
+  terminationReason   SettingOption?  @relation(fields: [terminationReasonId], references: [id], onDelete: SetNull)
+  // When it took effect, if the person backdated it; changedAt is when it
+  // was recorded.
+  effectiveDate       DateTime?       @map("effective_date")
+  changedById         String?         @map("changed_by_id")
+  changedByEmail      String          @map("changed_by_email")
+  changedAt           DateTime        @default(now()) @map("changed_at")
 
   @@index([customerId, changedAt])
   @@map("customer_status_logs")
+  @@schema("vaa_sys")
+}
+
+// A CS Specialist covering specific customers for someone else between two
+// dates (legacy CustomerTakeovers, which replaced the "backup specialist").
+// Active while startDate <= today <= endDate (Manila) and not cancelled.
+model CustomerTakeover {
+  id               String    @id @default(cuid())
+  customerId       String    @map("customer_id")
+  customer         Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  specialistEmail  String    @map("specialist_email")
+  startDate        DateTime  @map("start_date") @db.Date
+  endDate          DateTime  @map("end_date") @db.Date
+  reason           String?
+  createdByEmail   String    @map("created_by_email")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  cancelledAt      DateTime? @map("cancelled_at")
+  cancelledByEmail String?   @map("cancelled_by_email")
+
+  @@index([specialistEmail, startDate, endDate])
+  @@index([customerId])
+  @@map("customer_takeovers")
+  @@schema("vaa_sys")
+}
+
+// Notes on a customer, or on one of its accounts (accountId set). An
+// account's page shows its own notes and its customer's.
+model CustomerAccountNote {
+  id             String   @id @default(cuid())
+  customerId     String   @map("customer_id")
+  customer       Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  accountId      String?  @map("account_id")
+  account        Account? @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  body           String
+  createdByEmail String   @map("created_by_email")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([customerId, createdAt])
+  @@index([accountId, createdAt])
+  @@map("customer_account_notes")
   @@schema("vaa_sys")
 }
 
@@ -187,41 +328,187 @@ enum PaymentMethod {
 // first account is usually named after the customer. accountCode keeps the
 // legacy CMS format (CLT_ + 12 hex), like the CMS "Clients" tab.
 model Account {
-  id                   String               @id @default(cuid())
-  accountCode          String               @unique @map("account_code")
-  customerId           String               @map("customer_id")
-  customer             Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  name                 String
-  companyName          String               @map("company_name")
-  dbaName              String?              @map("dba_name")
-  website              String?
-  timeZone             String?              @map("time_zone")
-  invoiceContactSource InvoiceContactSource @map("invoice_contact_source")
-  invoiceContactName   String?              @map("invoice_contact_name")
-  invoiceContactEmail  String               @map("invoice_contact_email")
-  paymentMethod        PaymentMethod        @map("payment_method")
-  billingCountry       String?              @map("billing_country")
-  paymentMethodOther   String?              @map("payment_method_other")
-  hasPayoneerOrWise    Boolean?             @map("has_payoneer_or_wise")
-  invoiceContactRole   String?              @map("invoice_contact_role")
-  businessAddress      String?              @map("business_address")
+  id                     String               @id @default(cuid())
+  accountCode            String               @unique @map("account_code")
+  customerId             String               @map("customer_id")
+  customer               Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  name                   String
+  companyName            String               @map("company_name")
+  dbaName                String?              @map("dba_name")
+  website                String?
+  timeZone               String?              @map("time_zone")
+  invoiceContactSource   InvoiceContactSource @map("invoice_contact_source")
+  invoiceContactName     String?              @map("invoice_contact_name")
+  invoiceContactEmail    String               @map("invoice_contact_email")
+  paymentMethod          PaymentMethod        @map("payment_method")
+  billingCountry         String?              @map("billing_country")
+  paymentMethodOther     String?              @map("payment_method_other")
+  hasPayoneerOrWise      Boolean?             @map("has_payoneer_or_wise")
+  invoiceContactRole     String?              @map("invoice_contact_role")
+  businessAddress        String?              @map("business_address")
   // The platforms the VAs will work on, for the whole account.
-  platforms            String[]             @default([])
-  platformOther        String?              @map("platform_other")
+  platforms              String[]             @default([])
+  platformOther          String?              @map("platform_other")
   // Unused: in the Google Form, FBA/FBM and seller type are free text in
   // otherInfo. Kept to match 004; a later SQL file can drop them.
-  fulfillmentType      String?              @map("fulfillment_type")
-  sellerType           String?              @map("seller_type")
-  otherInfo            String?              @map("other_info")
-  createdAt            DateTime             @default(now()) @map("created_at")
-  updatedAt            DateTime             @updatedAt @map("updated_at")
+  fulfillmentType        String?              @map("fulfillment_type")
+  sellerType             String?              @map("seller_type")
+  otherInfo              String?              @map("other_info")
+  // Customer Management fields (legacy Accounts tab).
+  status                 AccountStatus        @default(PENDING)
+  statusChangedAt        DateTime             @default(now()) @map("status_changed_at")
+  // Came back after being terminated, or matches a terminated account's
+  // company. A flag, not a status.
+  isReturning            Boolean              @default(false) @map("is_returning")
+  categoryId             String?              @map("category_id")
+  category               SettingOption?       @relation("AccountCategory", fields: [categoryId], references: [id], onDelete: SetNull)
+  typeId                 String?              @map("type_id")
+  type                   SettingOption?       @relation("AccountType", fields: [typeId], references: [id], onDelete: SetNull)
+  countryRegionId        String?              @map("country_region_id")
+  countryRegion          SettingOption?       @relation("AccountCountryRegion", fields: [countryRegionId], references: [id], onDelete: SetNull)
+  sellerOnboardingLink   String?              @map("seller_onboarding_link")
+  // The signed contract document; contractId is which contract terms apply.
+  contractLink           String?              @map("contract_link")
+  contractId             String?              @map("contract_id")
+  contract               Contract?            @relation(fields: [contractId], references: [id], onDelete: SetNull)
+  // Pending review, as on Customer. reviewFromCustomer: flagged because
+  // its customer was paused/terminated, so it follows the customer's review.
+  reviewAction           AccountStatus?       @map("review_action")
+  statusBeforeReview     AccountStatus?       @map("status_before_review")
+  reviewRequestedByEmail String?              @map("review_requested_by_email")
+  reviewRequestedAt      DateTime?            @map("review_requested_at")
+  reviewReason           String?              @map("review_reason")
+  reviewFromCustomer     Boolean              @default(false) @map("review_from_customer")
+  createdAt              DateTime             @default(now()) @map("created_at")
+  updatedAt              DateTime             @updatedAt @map("updated_at")
 
   contacts   AccountContact[]
   tickets    Ticket[]
   submission OnboardingSubmission?
+  managers   AccountManager[]
+  statusLogs AccountStatusLog[]
+  notes      CustomerAccountNote[]
 
   @@index([customerId])
+  @@index([status])
   @@map("accounts")
+  @@schema("vaa_sys")
+}
+
+// Legacy account statuses. PENDING is never picked by hand: new accounts
+// start there and reactivated ones go back to it, and both become ACTIVE
+// when a VA connection starts (lib/va-connection-hooks.ts).
+enum AccountStatus {
+  PENDING
+  ACTIVE
+  PAUSED
+  INACTIVE
+  TERMINATED
+  CANCELLED
+
+  @@schema("vaa_sys")
+}
+
+// Every account status change (fromStatus null = created).
+model AccountStatusLog {
+  id                  String         @id @default(cuid())
+  accountId           String         @map("account_id")
+  account             Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  fromStatus          AccountStatus? @map("from_status")
+  toStatus            AccountStatus  @map("to_status")
+  reason              String?
+  terminationReasonId String?        @map("termination_reason_id")
+  terminationReason   SettingOption? @relation(fields: [terminationReasonId], references: [id], onDelete: SetNull)
+  effectiveDate       DateTime?      @map("effective_date")
+  changedByEmail      String         @map("changed_by_email")
+  changedAt           DateTime       @default(now()) @map("changed_at")
+
+  @@index([accountId, changedAt])
+  @@map("account_status_logs")
+  @@schema("vaa_sys")
+}
+
+// The account's account managers on the customer's side: one row per
+// person (the legacy CMS kept two comma lists that drifted apart).
+model AccountManager {
+  id        String   @id @default(cuid())
+  accountId String   @map("account_id")
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  name      String
+  email     String?
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([accountId])
+  @@map("account_managers")
+  @@schema("vaa_sys")
+}
+
+// ── Contracts ────────────────────────────────────────────────────
+
+// How a contract section's value is entered and shown.
+enum ContractFieldType {
+  PERCENTAGE
+  AMOUNT
+  TEXT
+  YES_NO
+
+  @@schema("vaa_sys")
+}
+
+// A contract template (legacy Contracts, CON-001). Accounts point at the
+// one that applies (Account.contractId), the single source of truth.
+model Contract {
+  id             String   @id @default(cuid())
+  contractCode   String   @unique @map("contract_code")
+  name           String
+  description    String?
+  // Review period: Annual, Semi-Annual, Quarterly, Monthly, Not Updated.
+  period         String   @default("Annual")
+  isActive       Boolean  @default(true) @map("is_active")
+  notes          String?
+  createdByEmail String   @map("created_by_email")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedByEmail String?  @map("updated_by_email")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  sections ContractSection[]
+  accounts Account[]
+
+  @@map("contracts")
+  @@schema("vaa_sys")
+}
+
+// The sections every contract can fill in (e.g. "Late fee", Percentage).
+model ContractSectionDef {
+  id             String            @id @default(cuid())
+  name           String
+  fieldType      ContractFieldType @default(TEXT) @map("field_type")
+  description    String?
+  sortOrder      Int               @default(0) @map("sort_order")
+  isActive       Boolean           @default(true) @map("is_active")
+  createdByEmail String            @map("created_by_email")
+  createdAt      DateTime          @default(now()) @map("created_at")
+
+  values ContractSection[]
+
+  @@map("contract_section_defs")
+  @@schema("vaa_sys")
+}
+
+// One contract's value for one section. YES_NO is stored as "Yes"/"No".
+model ContractSection {
+  id             String             @id @default(cuid())
+  contractId     String             @map("contract_id")
+  contract       Contract           @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  sectionDefId   String             @map("section_def_id")
+  sectionDef     ContractSectionDef @relation(fields: [sectionDefId], references: [id], onDelete: Cascade)
+  value          String
+  updatedByEmail String             @map("updated_by_email")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  @@unique([contractId, sectionDefId])
+  @@map("contract_sections")
   @@schema("vaa_sys")
 }
 

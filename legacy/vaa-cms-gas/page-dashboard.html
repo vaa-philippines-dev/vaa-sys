@@ -1,0 +1,83 @@
+<div class="dash-page">
+
+  <!-- Stat Cards -->
+  <div class="dash-grid" id="dashStats">
+    <div class="stat-card">
+      <div class="stat-icon blue">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <circle cx="10" cy="7" r="3.5" stroke="currentColor" stroke-width="1.75"/>
+          <path d="M3 17c0-3.314 3.134-6 7-6s7 2.686 7 6" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="stat-body">
+        <div class="stat-value" id="statCustomers">—</div>
+        <div class="stat-label">Total Customers</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon purple">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <rect x="2" y="5" width="16" height="12" rx="2" stroke="currentColor" stroke-width="1.75"/>
+          <path d="M2 9h16" stroke="currentColor" stroke-width="1.75"/>
+          <path d="M6 5V4a2 2 0 014 0v1" stroke="currentColor" stroke-width="1.75"/>
+        </svg>
+      </div>
+      <div class="stat-body">
+        <div class="stat-value" id="statClients">—</div>
+        <div class="stat-label">Total Clients</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon green">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.75"/>
+          <path d="M7 10l2 2 4-4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="stat-body">
+        <div class="stat-value" id="statActive">—</div>
+        <div class="stat-label">Active Clients</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon red">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.75"/>
+          <path d="M7 7l6 6M13 7l-6 6" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="stat-body">
+        <div class="stat-value" id="statTerminated">—</div>
+        <div class="stat-label">Terminated</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon orange">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <path d="M10 2l2 6h6l-5 3.6 1.9 5.9L10 14l-4.9 3.5 1.9-5.9L2 8h6z" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="stat-body">
+        <div class="stat-value" id="statReturning">—</div>
+        <div class="stat-label">Returning Clients</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent Activity -->
+  <div class="section-card">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Recent Activity</div>
+        <div class="section-subtitle">Latest changes across the system</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="navigate('activity')">View All</button>
+    </div>
+    <div id="dashActivity">
+      <div class="loading-screen" style="height:160px;">
+        <div class="loader-ring"></div>
+      </div>
+    </div>
+  </div>
+
+</div>

@@ -14,6 +14,9 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Claude Code worktrees: other checkouts of this repo, linted there.
     ".claude/**",
+    // Reference copy of the legacy Apps Script CMS, not part of the app.
+    "legacy/**",
+    "src/generated/**",
   ]),
 ]);
 

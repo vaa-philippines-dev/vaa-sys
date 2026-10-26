@@ -9,6 +9,7 @@ import { EXTERNAL_SYSTEMS, type SystemLink } from '@/components/lms/systems'
 import { STAGE_COLUMNS, initialsFrom } from '@/components/lms/stage-meta'
 import { requireArea, displayName } from '@/lib/auth'
 import { canUse, ROLE_LABELS } from '@/lib/access-fields'
+import { can } from '@/lib/permissions'
 import { listLeads } from '@/lib/customers'
 import type { OnboardingStage } from '@/lib/customer-fields'
 
@@ -39,7 +40,7 @@ export default async function LmsLayout({ children }: { children: React.ReactNod
             <SystemSwitcher current="Lead Management System" others={others} />
           </div>
           <Suspense>
-            <LmsNav total={leads.length} byStage={byStage} showSettings={canUse(user.role, 'settings')} />
+            <LmsNav total={leads.length} byStage={byStage} showSettings={can(user.role, 'settings', 'update')} />
           </Suspense>
         </div>
 

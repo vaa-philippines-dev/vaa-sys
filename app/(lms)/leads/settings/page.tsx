@@ -1,18 +1,20 @@
-import { requireArea } from '@/lib/auth'
+import { requireCan } from '@/lib/auth'
 import { manilaDateTime } from '@/lib/customer-fields'
 import { getWorkHourMinimums, getWorkHourMinimumsRow } from '@/lib/settings'
 import { WorkHourMinimumsForm } from '@/components/settings/WorkHourMinimumsForm'
 
 export default async function SettingsPage() {
-  await requireArea('settings', '/leads/settings')
+  await requireCan('settings', 'update', '/leads/settings')
   const [minimums, row] = await Promise.all([getWorkHourMinimums(), getWorkHourMinimumsRow()])
 
   return (
     <main className="w-full max-w-3xl space-y-6 px-4 py-6 sm:px-6">
       <div>
         <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Lead Management</p>
-        <h1 className="mt-1 text-2xl font-semibold">Settings</h1>
-        <p className="mt-1 text-sm text-muted-foreground">General settings for VAA Systems. Only admins can change them.</p>
+        <h1 className="mt-1 text-2xl font-semibold">Onboarding form settings</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Rules for the customer onboarding form. Only admins can change them. The lists people pick from are under Customer Management → Settings.
+        </p>
       </div>
 
       <section className="space-y-4 rounded-xl border bg-card p-5">

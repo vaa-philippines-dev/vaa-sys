@@ -2,7 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { findStaffUser, resolveRole } from '@/lib/auth'
+import { findStaffUser, resolveAccess } from '@/lib/auth'
 import { homeFor } from '@/lib/access-fields'
 
 // Google OAuth landing point. Exchanges the code for a Supabase session, then
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
       await supabase.auth.signOut()
       return NextResponse.redirect(`${origin}/login?error=account_disabled`)
     }
-    const role = await resolveRole(staff)
+    const { role } = await resolveAccess(staff)
     if (!role) {
       await supabase.auth.signOut()
       return NextResponse.redirect(`${origin}/login?error=no_access`)

@@ -3,7 +3,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { SignOutButton } from '@/components/layout/SignOutButton'
-import { CmsNav } from '@/components/cms/CmsNav'
+import { CmsNav, type CmsNavItem } from '@/components/cms/CmsNav'
 import { STATUS_ORDER } from '@/components/cms/status-meta'
 import { SystemSwitcher } from '@/components/lms/SystemSwitcher'
 import { EXTERNAL_SYSTEMS, type SystemLink } from '@/components/lms/systems'
@@ -11,18 +11,39 @@ import { initialsFrom } from '@/components/lms/stage-meta'
 import { prisma } from '@/lib/prisma'
 import { requireSignedIn, displayName } from '@/lib/auth'
 import { canUse, homeFor, ROLE_LABELS } from '@/lib/access-fields'
+import { can } from '@/lib/permissions'
+import { customerScopeWhere } from '@/lib/scope'
+import { countPendingReviews } from '@/lib/customers'
 import { redirect } from 'next/navigation'
 import type { CustomerStatus } from '@/lib/customer-fields'
 
 // Customer Management's shell: the LMS sidebar pattern in the .cms palette
-// (app/globals.css). Holds /customers and /access.
+// (app/globals.css). Holds every Customer Management page; each page still
+// checks its own permission.
 export default async function CmsLayout({ children }: { children: React.ReactNode }) {
   const user = await requireSignedIn()
-  if (!canUse(user.role, 'customers') && !canUse(user.role, 'access')) redirect(homeFor(user.role))
+  const r = user.role
+  if (!can(r, 'customers') && !can(r, 'access') && !can(r, 'settings')) redirect(homeFor(r))
 
-  const counts = await prisma.customer.groupBy({ by: ['status'], _count: { _all: true } })
+  const scope = await customerScopeWhere(user)
+  const [counts, reviews] = await Promise.all([
+    prisma.customer.groupBy({ by: ['status'], where: scope ?? {}, _count: { _all: true } }),
+    can(r, 'approvals', 'update') ? countPendingReviews() : Promise.resolve(0),
+  ])
   const byStatus = Object.fromEntries(STATUS_ORDER.map((s) => [s, counts.find((c) => c.status === s)?._count._all ?? 0])) as Record<CustomerStatus, number>
   const total = counts.reduce((sum, c) => sum + c._count._all, 0)
+
+  const candidates: (CmsNavItem | false)[] = [
+    can(r, 'customers') && { href: '/customers', label: 'Customers', icon: 'customers', count: total },
+    can(r, 'accounts') && { href: '/accounts', label: 'Accounts', icon: 'accounts' },
+    can(r, 'csSpecialists') && { href: '/specialists', label: 'CS Specialists', icon: 'specialists' },
+    can(r, 'approvals', 'update') && { href: '/approvals', label: 'Approvals', icon: 'approvals', count: reviews, alert: true },
+    can(r, 'contracts') && { href: '/contracts', label: 'Contracts', icon: 'contracts' },
+    can(r, 'activityLogs') && { href: '/activity', label: 'Activity log', icon: 'activity' },
+    can(r, 'settings') && { href: '/settings', label: 'Settings', icon: 'settings' },
+    can(r, 'access') && { href: '/access', label: 'Access', icon: 'access' },
+  ]
+  const items = candidates.filter((i): i is CmsNavItem => !!i)
 
   const others: SystemLink[] = [
     ...(canUse(user.role, 'leads') ? [{ label: 'Lead Management System', href: '/leads' }] : []),
@@ -46,7 +67,7 @@ export default async function CmsLayout({ children }: { children: React.ReactNod
             {switcher}
           </div>
           <Suspense>
-            <CmsNav total={total} byStatus={byStatus} showAccess={canUse(user.role, 'access')} />
+            <CmsNav items={items} byStatus={byStatus} />
           </Suspense>
         </div>
 
@@ -78,6 +99,13 @@ export default async function CmsLayout({ children }: { children: React.ReactNod
         <ThemeToggle />
         <SignOutButton />
       </header>
+      <nav className="flex shrink-0 gap-1 overflow-x-auto border-b bg-card px-4 py-1.5 md:hidden" aria-label="Customer Management">
+        {items.map((i) => (
+          <Link key={i.href} href={i.href} className="shrink-0 rounded-lg px-2.5 py-1 text-[13px] text-muted-foreground hover:bg-muted hover:text-foreground">
+            {i.label}
+          </Link>
+        ))}
+      </nav>
 
       <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">{children}</div>
     </div>

@@ -1,0 +1,427 @@
+<!-- page-clients.html -->
+<div class="page-clients">
+
+  <div class="flex items-center justify-between mb-4">
+    <div style="font-size:13px;color:var(--text-muted);">All client accounts across all customers</div>
+    <button class="btn btn-primary" onclick="ClientPage.openAdd()">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      Add Client
+    </button>
+  </div>
+
+  <div class="section-card">
+    <div class="table-controls" style="flex-wrap:wrap;gap:8px;">
+      <div class="table-search">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.6"/><path d="M9.5 9.5L12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <input type="text" id="cliSearch" placeholder="Search clients…" oninput="ClientPage.onSearch()" />
+      </div>
+      <div class="flex gap-2 items-center" style="flex-wrap:wrap;">
+        <select class="form-select" style="width:auto;padding:6px 10px;font-size:12px;" id="cliStatusFilter" onchange="ClientPage.onFilter()">
+          <option value="">All Statuses</option>
+          <option value="Active">Active</option>
+          <option value="Inactive">Inactive</option>
+          <option value="Terminated">Terminated</option>
+        </select>
+        <select class="form-select" style="width:auto;padding:6px 10px;font-size:12px;" id="cliCatFilter" onchange="ClientPage.onFilter()">
+          <option value="">All Categories</option>
+        </select>
+        <select class="form-select" style="width:auto;padding:6px 10px;font-size:12px;" id="cliTypeFilter" onchange="ClientPage.onFilter()">
+          <option value="">All Types</option>
+        </select>
+        <div class="table-rows-select">
+          Show
+          <select id="cliPageSize" onchange="ClientPage.onPageSizeChange(this.value)">
+            <option value="10" selected>10</option>
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+          rows
+        </div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="cliTable">
+        <thead>
+          <tr>
+            <th onclick="ClientPage.sort('companyName')">Company / Account <span class="sort-arrow">↕</span></th>
+            <th onclick="ClientPage.sort('primaryContact')">Primary Contact <span class="sort-arrow">↕</span></th>
+            <th onclick="ClientPage.sort('category')">Category <span class="sort-arrow">↕</span></th>
+            <th onclick="ClientPage.sort('type')">Type <span class="sort-arrow">↕</span></th>
+            <th onclick="ClientPage.sort('countryRegion')">Region <span class="sort-arrow">↕</span></th>
+            <th onclick="ClientPage.sort('status')">Status <span class="sort-arrow">↕</span></th>
+            <th style="width:100px;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="cliTableBody">
+          <tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted);">
+            <div class="loader-ring" style="margin:0 auto 8px;"></div>Loading…
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pagination" id="cliPagination"></div>
+  </div>
+</div>
+
+<script>
+const ClientPage = (() => {
+  let _all = [], _customers = [], _filtered = [], _page = 1, _pageSize = 10, _sortField = 'companyName', _sortAsc = true;
+
+  function init() {
+    _populateSettingFilters();
+    google.script.run
+      .withSuccessHandler(res => {
+        if (res.success) { _customers = res.data || []; }
+      })
+      .getCustomers({});
+    google.script.run
+      .withSuccessHandler(res => {
+        if (!res.success) { showToast(res.error, 'error'); return; }
+        _all = res.data;
+        _applyFilters();
+      })
+      .withFailureHandler(err => showToast(err.message, 'error'))
+      .getClients({});
+  }
+
+  function _populateSettingFilters() {
+    const s = CMS.settings || {};
+    const catSel  = document.getElementById('cliCatFilter');
+    const typeSel = document.getElementById('cliTypeFilter');
+    (s.Category || []).forEach(c => {
+      catSel.innerHTML += `<option value="${_esc(c.value)}">${_esc(c.label)}</option>`;
+    });
+    (s.Type || []).forEach(t => {
+      typeSel.innerHTML += `<option value="${_esc(t.value)}">${_esc(t.label)}</option>`;
+    });
+  }
+
+  function _applyFilters() {
+    const q    = (document.getElementById('cliSearch')?.value || '').toLowerCase();
+    const st   = document.getElementById('cliStatusFilter')?.value || '';
+    const cat  = document.getElementById('cliCatFilter')?.value   || '';
+    const type = document.getElementById('cliTypeFilter')?.value  || '';
+
+    _filtered = _all.filter(r => {
+      const mQ   = !q   || (r.companyName||'').toLowerCase().includes(q) || (r.accountName||'').toLowerCase().includes(q) || (r.primaryContact||'').toLowerCase().includes(q);
+      const mSt  = !st  || r.status   === st;
+      const mCat = !cat || r.category === cat;
+      const mTyp = !type|| r.type     === type;
+      return mQ && mSt && mCat && mTyp;
+    });
+
+    _filtered.sort((a, b) => {
+      let va = String(a[_sortField]||'').toLowerCase();
+      let vb = String(b[_sortField]||'').toLowerCase();
+      return _sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+    });
+    _page = 1;
+    _render();
+  }
+
+  function _render() {
+    const start  = (_page - 1) * _pageSize;
+    const rows   = _filtered.slice(start, start + _pageSize);
+    const tbody  = document.getElementById('cliTableBody');
+    const canDel = CMS.user?.permissions?.canDelete;
+
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">
+        <svg width="36" height="36" viewBox="0 0 20 20" fill="none"><rect x="2" y="5" width="16" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M2 9h16" stroke="currentColor" stroke-width="1.5"/></svg>
+        <h3>No clients found</h3><p>Adjust your filters or add a new client.</p>
+      </div></td></tr>`;
+    } else {
+      tbody.innerHTML = rows.map(r => {
+        const typeBadge = r.type ? `badge-${(r.type||'').toLowerCase()}` : 'badge-inactive';
+        return `<tr>
+          <td>
+            <a href="#" onclick="navigate('client-profile','${_esc(r.clientId)}');return false;"
+               style="color:var(--accent);font-weight:600;">${_esc(r.companyName)}</a>
+            ${r.accountName ? `<div style="font-size:11.5px;color:var(--text-muted);">${_esc(r.accountName)}</div>` : ''}
+            ${r.isReturning ? `<span class="badge badge-returning" style="font-size:10px;">Returning</span>` : ''}
+          </td>
+          <td>${_esc(r.primaryContact || '—')}</td>
+          <td>${r.category ? `<span class="badge badge-inactive">${_esc(r.category)}</span>` : '—'}</td>
+          <td>${r.type ? `<span class="badge ${typeBadge}">${_esc(r.type)}</span>` : '—'}</td>
+          <td class="muted">${_esc(r.countryRegion || '—')}</td>
+          <td><span class="badge badge-${(r.status||'').toLowerCase()}">${_esc(r.status||'—')}</span></td>
+          <td>
+            <div class="flex gap-2">
+              <button class="btn btn-ghost btn-icon" title="Edit" onclick="ClientPage.openEdit('${_esc(r.clientId)}')">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9.5 2.5l2 2-7 7H2.5v-2l7-7z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+              </button>
+              ${canDel ? `<button class="btn btn-ghost btn-icon" title="Delete" style="color:var(--danger)" onclick="ClientPage.confirmDelete('${_esc(r.clientId)}','${_esc(r.companyName)}')">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 3.5h10M5.5 3.5V2h3v1.5M4 3.5l.5 8.5h5l.5-8.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+              </button>` : ''}
+            </div>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+    _renderPagination();
+  }
+
+  function _renderPagination() {
+    const total = _filtered.length;
+    const pages = Math.ceil(total / _pageSize);
+    const start = (_page - 1) * _pageSize + 1;
+    const end   = Math.min(_page * _pageSize, total);
+    const el    = document.getElementById('cliPagination');
+    if (!el) return;
+
+    let btns = '';
+    for (let p = 1; p <= pages; p++) {
+      if (p===1||p===pages||Math.abs(p-_page)<=1) btns += `<button class="page-btn ${p===_page?'active':''}" onclick="ClientPage.goPage(${p})">${p}</button>`;
+      else if (Math.abs(p-_page)===2) btns += `<span style="padding:0 4px;color:var(--text-muted)">…</span>`;
+    }
+    el.innerHTML = `
+      <span>Showing ${total ? start : 0}–${end} of ${total}</span>
+      <div class="page-btns">
+        <button class="page-btn" onclick="ClientPage.goPage(${_page-1})" ${_page===1?'disabled':''}>‹</button>
+        ${btns}
+        <button class="page-btn" onclick="ClientPage.goPage(${_page+1})" ${_page>=pages?'disabled':''}>›</button>
+      </div>`;
+  }
+
+  function openAdd(prefillCustomerId) {
+    openModal(_buildForm(null, prefillCustomerId));
+  }
+
+  function openEdit(id) {
+    const rec = _all.find(r => r.clientId === id);
+    if (!rec) { showToast('Client not found', 'error'); return; }
+    openModal(_buildForm(rec));
+  }
+
+  function _buildForm(rec, prefillCustId) {
+    const isEdit = !!rec;
+    const v = f => rec ? _esc(rec[f]||'') : '';
+    const s = CMS.settings || {};
+
+    const custOpts = _customers.map(c =>
+      `<option value="${_esc(c.customerId)}" ${(rec&&rec.customerId===c.customerId)||(prefillCustId===c.customerId)?'selected':''}>${_esc(c.customerName)}</option>`
+    ).join('');
+
+    const catOpts = (s.Category||[]).map(c =>
+      `<option value="${_esc(c.value)}" ${rec&&rec.category===c.value?'selected':''}>${_esc(c.label)}</option>`
+    ).join('');
+
+    const typeOpts = (s.Type||[]).map(t =>
+      `<option value="${_esc(t.value)}" ${rec&&rec.type===t.value?'selected':''}>${_esc(t.label)}</option>`
+    ).join('');
+
+    const regionOpts = (s.CountryRegion||[]).map(r =>
+      `<option value="${_esc(r.value)}" ${rec&&rec.countryRegion===r.value?'selected':''}>${_esc(r.label)}</option>`
+    ).join('');
+
+    return `
+      <div class="modal-header">
+        <div class="modal-title">${isEdit ? 'Edit Client' : 'Add Client'}</div>
+        <button class="modal-close" onclick="closeModal()">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="modal-body" style="max-height:68vh;overflow-y:auto;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.8px;color:var(--text-muted);margin-bottom:12px;text-transform:uppercase;">Basic Info</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Customer <span class="required">*</span></label>
+            <select class="form-select" id="f_customerId">
+              <option value="">Select customer…</option>${custOpts}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select class="form-select" id="f_status">
+              ${['Active','Inactive','Terminated'].map(s=>`<option value="${s}" ${rec&&rec.status===s?'selected':''}>${s}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Company Name <span class="required">*</span></label>
+            <input class="form-input" id="f_companyName" type="text" value="${v('companyName')}" placeholder="e.g. Acme Corp" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Account Name</label>
+            <input class="form-input" id="f_accountName" type="text" value="${v('accountName')}" placeholder="e.g. Acme — Main" />
+          </div>
+        </div>
+
+        <div style="font-size:11px;font-weight:700;letter-spacing:.8px;color:var(--text-muted);margin:16px 0 12px;text-transform:uppercase;">Contacts</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Primary Contact</label>
+            <input class="form-input" id="f_primaryContact" type="text" value="${v('primaryContact')}" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Secondary Contact</label>
+            <input class="form-input" id="f_secondaryContact" type="text" value="${v('secondaryContact')}" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Account Managers</label>
+          <input class="form-input" id="f_accountManagers" type="text" value="${v('accountManagers')}" placeholder="Comma-separated names" />
+          <div class="form-hint">Separate multiple managers with commas</div>
+        </div>
+
+        <div style="font-size:11px;font-weight:700;letter-spacing:.8px;color:var(--text-muted);margin:16px 0 12px;text-transform:uppercase;">Invoice Contact</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Name</label>
+            <input class="form-input" id="f_invoiceContactName" type="text" value="${v('invoiceContactName')}" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Role</label>
+            <input class="form-input" id="f_invoiceContactRole" type="text" value="${v('invoiceContactRole')}" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Email</label>
+          <input class="form-input" id="f_invoiceContactEmail" type="email" value="${v('invoiceContactEmail')}" placeholder="invoice@company.com" />
+        </div>
+
+        <div style="font-size:11px;font-weight:700;letter-spacing:.8px;color:var(--text-muted);margin:16px 0 12px;text-transform:uppercase;">Classification</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Category</label>
+            <select class="form-select" id="f_category">
+              <option value="">Select…</option>${catOpts}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Type</label>
+            <select class="form-select" id="f_type">
+              <option value="">Select…</option>${typeOpts}
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Country / Region</label>
+          <select class="form-select" id="f_countryRegion">
+            <option value="">Select…</option>${regionOpts}
+          </select>
+        </div>
+
+        ${isEdit && rec.isReturning ? `<div style="padding:10px 14px;background:var(--warning-light);border-radius:var(--radius-sm);font-size:12.5px;color:var(--warning);margin-bottom:12px;">
+          ⚠ This client is marked as a <strong>Returning Customer</strong>.
+        </div>` : ''}
+
+        <div class="form-group">
+          <label class="form-label">Notes</label>
+          <textarea class="form-textarea" id="f_notes">${rec ? _esc(rec.notes||'') : ''}</textarea>
+        </div>
+        <div id="cliFormError" style="color:var(--danger);font-size:12.5px;margin-top:4px;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="ClientPage.submitForm('${isEdit ? rec.clientId : ''}')">
+          ${isEdit ? 'Save Changes' : 'Create Client'}
+        </button>
+      </div>`;
+  }
+
+  function submitForm(id) {
+    const errEl = document.getElementById('cliFormError');
+    const payload = {
+      customerId:          document.getElementById('f_customerId')?.value,
+      companyName:         document.getElementById('f_companyName')?.value?.trim(),
+      accountName:         document.getElementById('f_accountName')?.value?.trim(),
+      primaryContact:      document.getElementById('f_primaryContact')?.value?.trim(),
+      secondaryContact:    document.getElementById('f_secondaryContact')?.value?.trim(),
+      accountManagers:     document.getElementById('f_accountManagers')?.value?.trim(),
+      invoiceContactName:  document.getElementById('f_invoiceContactName')?.value?.trim(),
+      invoiceContactRole:  document.getElementById('f_invoiceContactRole')?.value?.trim(),
+      invoiceContactEmail: document.getElementById('f_invoiceContactEmail')?.value?.trim(),
+      category:            document.getElementById('f_category')?.value,
+      type:                document.getElementById('f_type')?.value,
+      countryRegion:       document.getElementById('f_countryRegion')?.value,
+      status:              document.getElementById('f_status')?.value,
+      notes:               document.getElementById('f_notes')?.value
+    };
+
+    if (!payload.customerId) { if(errEl) errEl.textContent = 'Please select a Customer.'; return; }
+    if (!payload.companyName) { if(errEl) errEl.textContent = 'Company Name is required.'; return; }
+    if (errEl) errEl.textContent = '';
+
+    const btn = document.querySelector('.modal-footer .btn-primary');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+    if (id) {
+      google.script.run.withSuccessHandler(_onSave).withFailureHandler(_onErr).updateClient(id, payload);
+    } else {
+      google.script.run.withSuccessHandler(_onSave).withFailureHandler(_onErr).createClient(payload);
+    }
+  }
+
+  function _onSave(res) {
+    if (!res.success) {
+      const errEl = document.getElementById('cliFormError');
+      if (errEl) errEl.textContent = (res.errors||[res.error]).join(' ');
+      const btn = document.querySelector('.modal-footer .btn-primary');
+      if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
+      return;
+    }
+    closeModal();
+    if (res.isReturning) showToast('Client saved — marked as Returning Customer.', 'warning');
+    else showToast('Client saved successfully.', 'success');
+    _refresh();
+  }
+
+  function _onErr(err) {
+    showToast(err.message, 'error');
+    const btn = document.querySelector('.modal-footer .btn-primary');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+  }
+
+  function confirmDelete(id, name) {
+    openModal(`
+      <div class="modal-header">
+        <div class="modal-title">Delete Client</div>
+        <button class="modal-close" onclick="closeModal()">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:14px;">Delete <strong>${_esc(name)}</strong>?</p>
+        <p style="font-size:13px;color:var(--text-muted);margin-top:8px;">This action cannot be undone.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-danger" onclick="ClientPage.doDelete('${_esc(id)}')">Delete</button>
+      </div>`);
+  }
+
+  function doDelete(id) {
+    google.script.run
+      .withSuccessHandler(res => {
+        closeModal();
+        if (res.success) { showToast('Client deleted.', 'success'); _refresh(); }
+        else showToast(res.error, 'error');
+      })
+      .withFailureHandler(err => showToast(err.message, 'error'))
+      .deleteClient(id);
+  }
+
+  function _refresh() {
+    google.script.run
+      .withSuccessHandler(res => { if (res.success) { _all = res.data; _applyFilters(); } })
+      .getClients({});
+  }
+
+  function sort(field) { _sortField === field ? _sortAsc = !_sortAsc : (_sortField = field, _sortAsc = true); _applyFilters(); }
+  function onSearch()  { _applyFilters(); }
+  function onFilter()  { _applyFilters(); }
+  function onPageSizeChange(v) { _pageSize = parseInt(v); _page = 1; _render(); }
+  function goPage(p) { const max = Math.ceil(_filtered.length / _pageSize); if (p>=1 && p<=max) { _page = p; _render(); } }
+
+  function _esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+  return { init, openAdd, openEdit, submitForm, confirmDelete, doDelete, sort, onSearch, onFilter, onPageSizeChange, goPage };
+})();
+
+ClientPage.init();
+</script>

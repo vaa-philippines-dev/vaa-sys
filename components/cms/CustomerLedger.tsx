@@ -1,6 +1,7 @@
 import Link from 'next/link'
+import { AlertTriangle, Hourglass } from 'lucide-react'
 import { STATUS_META } from '@/components/cms/status-meta'
-import type { CustomerStatus } from '@/lib/customer-fields'
+import { WARNING_LABELS, type CustomerStatus, type CustomerWarning } from '@/lib/customer-fields'
 import { cn } from '@/lib/utils'
 
 export type LedgerRow = {
@@ -12,6 +13,9 @@ export type LedgerRow = {
   daysInStatus: number
   accountCount: number
   vasRequested: number
+  specialist: string | null
+  inReview: boolean
+  warnings: CustomerWarning[]
 }
 
 // The customer list as a ledger: one row per customer, its status as a
@@ -24,6 +28,7 @@ export function CustomerLedger({ rows }: { rows: LedgerRow[] }) {
           <tr className="border-b">
             <th className="py-3 pl-6 pr-3 font-medium">Customer</th>
             <th className="px-3 py-3 font-medium">Status</th>
+            <th className="hidden px-3 py-3 font-medium lg:table-cell">CS Specialist</th>
             <th className="hidden px-3 py-3 text-right font-medium sm:table-cell">Accounts</th>
             <th className="hidden px-3 py-3 text-right font-medium sm:table-cell">VAs</th>
             <th className="hidden py-3 pl-3 pr-6 text-right font-medium md:table-cell">In status</th>
@@ -47,8 +52,17 @@ export function CustomerLedger({ rows }: { rows: LedgerRow[] }) {
                 </p>
               </td>
               <td className="px-3 py-3">
-                <span className={cn('inline-flex h-6 items-center rounded-full px-2.5 text-xs font-medium', STATUS_META[r.status].soft)}>{STATUS_META[r.status].label}</span>
+                <span className="flex items-center gap-1.5">
+                  <span className={cn('inline-flex h-6 items-center rounded-full px-2.5 text-xs font-medium', STATUS_META[r.status].soft)}>{STATUS_META[r.status].label}</span>
+                  {r.inReview && <Hourglass className="h-3.5 w-3.5 text-warning" aria-label="Waiting for a CS Manager's review" />}
+                  {r.warnings.length > 0 && (
+                    <span title={r.warnings.map((w) => WARNING_LABELS[w]).join(', ')}>
+                      <AlertTriangle className="h-3.5 w-3.5 text-warning" aria-label={r.warnings.map((w) => WARNING_LABELS[w]).join(', ')} />
+                    </span>
+                  )}
+                </span>
               </td>
+              <td className="hidden px-3 py-3 text-[13px] lg:table-cell">{r.specialist ?? <span className="text-muted-foreground">Unassigned</span>}</td>
               <td className="hidden px-3 py-3 text-right font-display tabular-nums sm:table-cell">{r.accountCount}</td>
               <td className="hidden px-3 py-3 text-right font-display tabular-nums sm:table-cell">{r.vasRequested}</td>
               <td className="hidden whitespace-nowrap py-3 pl-3 pr-6 text-right text-muted-foreground md:table-cell">

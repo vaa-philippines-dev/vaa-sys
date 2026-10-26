@@ -49,7 +49,7 @@ export function LmsNav({ total, byStage, showSettings }: { total: number; byStag
             )}
           >
             <Settings className="h-[15px] w-[15px]" strokeWidth={1.75} />
-            Settings
+            Form settings
           </Link>
         )}
       </nav>

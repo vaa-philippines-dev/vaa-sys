@@ -1,13 +1,13 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { getActor } from '@/lib/auth'
+import { getActorFor } from '@/lib/auth'
 import { minimumsSchema, type WorkHourMinimums } from '@/lib/onboarding-fields'
 import { saveWorkHourMinimums } from '@/lib/settings'
 import type { ActionResult } from '@/lib/customer-fields'
 
 export async function updateWorkHourMinimums(input: WorkHourMinimums): Promise<ActionResult> {
-  const actor = await getActor('settings')
+  const actor = await getActorFor('settings', 'update')
   if (!actor) return { ok: false, error: 'Only admins can change settings.' }
 
   const parsed = minimumsSchema.safeParse(input)
