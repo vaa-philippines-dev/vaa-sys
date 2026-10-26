@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { ADMIN_EMAIL_DOMAIN, requireArea } from '@/lib/auth'
 import { grantableRoles, ROLE_DESCRIPTIONS, ROLE_LABELS, ACCESS_ROLES } from '@/lib/access-fields'
+import { listServiceDepartments } from '@/lib/workforce'
 import { manilaDate } from '@/lib/customer-fields'
 import { AddAccessForm, AccessRowControls } from '@/components/access/AccessControls'
 
@@ -10,7 +11,7 @@ export default async function AccessPage() {
   const user = await requireArea('access', '/access')
   const grantable = grantableRoles(user.role)
 
-  const [rows, admins] = await Promise.all([
+  const [rows, admins, departments] = await Promise.all([
     prisma.accessUser.findMany({ orderBy: [{ isActive: 'desc' }, { role: 'asc' }, { email: 'asc' }] }),
     prisma.$queryRaw<StaffName[]>`
       SELECT email, trim(first_name || ' ' || last_name) AS name
@@ -19,7 +20,9 @@ export default async function AccessPage() {
         AND system_role::text IN ('SUPER_ADMIN', 'SYSTEM_ADMIN')
         AND lower(email) LIKE ${'%' + ADMIN_EMAIL_DOMAIN}
       ORDER BY first_name`,
+    listServiceDepartments(),
   ])
+  const departmentName = new Map(departments.map((d) => [d.id, d.name]))
   const names = rows.length
     ? await prisma.$queryRaw<StaffName[]>`
         SELECT lower(email) AS email, trim(first_name || ' ' || last_name) AS name
@@ -37,18 +40,21 @@ export default async function AccessPage() {
         </p>
       </div>
 
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {ACCESS_ROLES.map((r) => (
-          <div key={r} className="rounded-xl border bg-card p-3">
-            <p className="text-sm font-medium">{ROLE_LABELS[r]}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{ROLE_DESCRIPTIONS[r]}</p>
-          </div>
-        ))}
-      </section>
+      <details className="group rounded-2xl border bg-card">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-medium">What each role can do</summary>
+        <dl className="grid gap-x-6 gap-y-3 border-t px-4 py-4 sm:grid-cols-2 lg:grid-cols-3">
+          {ACCESS_ROLES.map((r) => (
+            <div key={r}>
+              <dt className="text-sm font-medium">{ROLE_LABELS[r]}</dt>
+              <dd className="mt-0.5 text-xs text-muted-foreground">{ROLE_DESCRIPTIONS[r]}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
 
       <section className="space-y-3">
         <h2 className="font-semibold">Add someone</h2>
-        <AddAccessForm roles={grantable} />
+        <AddAccessForm roles={grantable} departments={departments} />
       </section>
 
       <section className="space-y-3">
@@ -83,6 +89,7 @@ export default async function AccessPage() {
                   </td>
                   <td className="px-4 py-3">
                     {ROLE_LABELS[r.role]}
+                    {r.departmentId && <span className="block text-xs text-muted-foreground">{departmentName.get(r.departmentId) ?? 'Unknown department'}</span>}
                     {!r.isActive && <span className="ml-2 text-xs text-muted-foreground">(removed)</span>}
                   </td>
                   <td className="hidden px-4 py-3 text-xs text-muted-foreground md:table-cell">
@@ -90,7 +97,15 @@ export default async function AccessPage() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     {grantable.includes(r.role) && (
-                      <AccessRowControls id={r.id} role={r.role} isActive={r.isActive} roles={grantable} isSelf={r.email === user.email.toLowerCase()} />
+                      <AccessRowControls
+                        id={r.id}
+                        role={r.role}
+                        departmentId={r.departmentId}
+                        isActive={r.isActive}
+                        roles={grantable}
+                        departments={departments}
+                        isSelf={r.email === user.email.toLowerCase()}
+                      />
                     )}
                   </td>
                 </tr>

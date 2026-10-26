@@ -212,3 +212,22 @@ How the old Customer Management System works. Use this when rebuilding it in vaa
 - **Attendance:** the `AttendanceRecords` tab may mix old daily rows with new monthly rows. Inspect it before importing.
 - **Inquiry links:** reconstruct `OriginatingInquiryId` from each Concern's `LinkedTerminationTicketId`.
 - **Shared data:** va-management already holds a copy of the legacy customers and accounts in `public.customers` / `public.accounts`. VA records (`VirtualAssistants`) probably belong to va-management's workforce data, not vaa_sys.
+
+## 7. Rebuilt in vaa-sys
+
+### Module 1: foundation + Customers & Accounts (SQL `005`)
+
+- **Roles:** the CMS roles except "Manager" (unused) are `AccessRole` values. The module × role capability map is `lib/permissions.ts` (from `_permDefaultFor` and `NAV_ROLE_DEFAULT`); later modules extend it. No auto-provisioning, and unknown actions are refused. A Service Manager's department is a `public.departments` id on `access_users`.
+- **Settings:** `vaa_sys.setting_options`, seeded with `_seedSettings`'s Category, Type, CountryRegion (time zones added), TerminationReason, VARequestLostReason, InquiryType and InquiryLostReason. **Department and Service are not copied:** they come from Workforce (`public.departments` SERVICE level; `public.skills` via `department_skills`). ScheduleType and RequestType were not seeded; module 2 decides whether it needs them.
+- **Activity log:** `vaa_sys.activity_logs` + `logActivity()` (`lib/activity.ts`), written in the same transaction as the change. `customer_status_logs` still records customer status changes; `account_status_logs` does the same for accounts.
+- **Customers:** CS Specialist by email, scope = own + running takeovers (`lib/scope.ts`), takeovers are cancelled rather than deleted, payment date / no payment yet, Inactive, termination/reactivation counters (dates come from the status logs instead of comma lists), notes, UI-only warnings.
+- **Accounts:** status, Returning, category/type/country-region as foreign keys to Settings, seller onboarding link, contract link, contract (`accounts.contract_id` is the one source of truth; legacy `ContractAssignments` is not rebuilt), account managers as rows, profile page.
+- **Status engine (`lib/status.ts`), legacy bugs fixed:**
+  - one path for every status change; pauses/terminations/cancellations by non-CS-Managers apply and are flagged, and Cancel reverts the customer **and** its cascaded accounts and takes back the termination count
+  - editing a customer never touches its status
+  - admins don't need review
+  - leaving Terminated/Cancelled counts as a reactivation whether it goes to Pending or Active
+  - no status change can be dated in the future
+  - new accounts start Pending and become Active through `activateOnConnectionStart()` (the legacy `'Clients'` tab bug)
+- **Hooks for module 2** (`lib/va-connection-hooks.ts`): `countStartedVaConnections` (blocks terminate/cancel), `startedVaCountsByCustomer` (VA warnings), `activateOnConnectionStart`. Service Manager department scoping is marked `MODULE 2` in `lib/scope.ts`.
+- **Not rebuilt:** account health score (needs requests and inquiries), welcome email (module 5), customer delete, admin "View As", per-role nav overrides, FieldPermissions.

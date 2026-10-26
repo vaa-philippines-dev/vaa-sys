@@ -1,7 +1,10 @@
 import Link from 'next/link'
-import { ArrowLeft } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Hourglass, RotateCcw } from 'lucide-react'
 import { StatusChanger } from '@/components/customers/StatusChanger'
 import { AccountsView } from '@/components/customers/AccountsView'
+import { CustomerEditForm, NotesPanel, SpecialistSelect } from '@/components/customers/CustomerPanels'
+import { ReviewButtons } from '@/components/cms/ReviewButtons'
+import { ActivityTable } from '@/components/cms/ActivityTable'
 import { OnboardingLinkPanel } from '@/components/leads/OnboardingLinkPanel'
 import { OnboardingStepper } from '@/components/lms/OnboardingStepper'
 import { STAGE_META, initialsFrom } from '@/components/lms/stage-meta'
@@ -9,11 +12,28 @@ import { STATUS_META } from '@/components/cms/status-meta'
 import { StatusRibbon } from '@/components/cms/StatusRibbon'
 import { cn } from '@/lib/utils'
 import { canUse, type AccessRole } from '@/lib/access-fields'
-import { STATUS_LABELS, manilaDate, manilaDateTime } from '@/lib/customer-fields'
+import { STATUS_LABELS, WARNING_LABELS, dayString, isTerminal, manilaDate, manilaDateTime, type CustomerWarning } from '@/lib/customer-fields'
 import { onboardingEmail, onboardingUrl } from '@/lib/onboarding'
 import type { getCustomer } from '@/lib/customers'
+import type { SettingOptionLite } from '@/lib/settings-fields'
+import type { ActivityLog } from '@/src/generated/prisma/client'
 
 type Customer = NonNullable<Awaited<ReturnType<typeof getCustomer>>>
+
+// What Customer Management adds to the page, worked out on the server.
+export type CustomerCmsData = {
+  canEdit: boolean
+  canAssign: boolean
+  canReview: boolean
+  reviewed: boolean
+  team: { email: string; name: string }[]
+  specialistName: string | null
+  reviewByName: string | null
+  terminationReasons: SettingOptionLite[]
+  warnings: CustomerWarning[]
+  activity: ActivityLog[]
+  takeovers: { id: string; specialistName: string; startDate: Date; endDate: Date; state: string }[]
+}
 
 // One customer page for both areas. From Lead Management it leads with the
 // onboarding link; from Customer Management with the status controls.
@@ -22,17 +42,20 @@ export function CustomerDetail({
   role,
   senderName,
   from,
+  cms,
 }: {
   customer: Customer
   role: AccessRole
   senderName: string
   from: 'customers' | 'leads'
+  cms?: CustomerCmsData
 }) {
   const now = new Date()
   const liveLink = customer.onboardingLinks.find((l) => !l.revokedAt && !l.submittedAt && l.expiresAt > now) ?? null
   const latestSubmission = customer.submissions[0] ?? null
   const mayManageLinks = canUse(role, 'leads') && customer.status === 'PENDING' && !latestSubmission
-  const mayChangeStatus = canUse(role, 'customerStatus')
+  const mayChangeStatus = canUse(role, 'customerStatus') && !!cms
+  const day = (d: Date) => new Date(`${dayString(d)}T00:00:00+08:00`).toLocaleDateString('en-PH', manilaDate)
 
   const linkInfo = liveLink
     ? {
@@ -98,7 +121,57 @@ export function CustomerDetail({
               </p>
             </div>
           </div>
+          {customer.reviewAction && customer.statusBeforeReview && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
+              <p className="flex items-start gap-2">
+                <Hourglass className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                <span>
+                  Changed from {STATUS_LABELS[customer.statusBeforeReview]} to {STATUS_LABELS[customer.reviewAction]} by {cms?.reviewByName ?? customer.reviewRequestedByEmail}
+                  {customer.reviewRequestedAt && ` on ${customer.reviewRequestedAt.toLocaleDateString('en-PH', manilaDate)}`}. Waiting for a CS Manager’s review.
+                </span>
+              </p>
+              {cms?.canReview && <ReviewButtons kind="customer" id={customer.id} />}
+            </div>
+          )}
           <StatusRibbon logs={customer.statusLogs} now={now} />
+          {cms && (
+            <dl className="grid gap-x-6 gap-y-3 border-t pt-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <dt className="text-xs text-muted-foreground">CS Specialist</dt>
+                <dd className="mt-0.5">
+                  {cms.canAssign ? <SpecialistSelect customerId={customer.id} current={customer.assignedSpecialistEmail} team={cms.team} /> : (cms.specialistName ?? 'Unassigned')}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">First payment</dt>
+                <dd className="mt-0.5">{customer.noPaymentYet || !customer.paymentDate ? 'No payment yet' : day(customer.paymentDate)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">Terminations</dt>
+                <dd className="mt-0.5 font-display tabular-nums">{customer.terminationCount}</dd>
+              </div>
+              <div>
+                <dt className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <RotateCcw className="h-3 w-3" /> Reactivations
+                </dt>
+                <dd className="mt-0.5 font-display tabular-nums">{customer.reactivationCount}</dd>
+              </div>
+            </dl>
+          )}
+          {cms && cms.warnings.length > 0 && (
+            <ul className="space-y-1">
+              {cms.warnings.map((w) => (
+                <li key={w} className="flex items-center gap-2 text-sm text-warning">
+                  <AlertTriangle className="h-4 w-4" /> {WARNING_LABELS[w]}
+                </li>
+              ))}
+            </ul>
+          )}
+          {cms && cms.takeovers.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {cms.takeovers.map((t) => `${t.state === 'ACTIVE' ? 'Covered' : 'To be covered'} by ${t.specialistName}, ${day(t.startDate)} – ${day(t.endDate)}`).join(' · ')}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
             Added {customer.createdAt.toLocaleDateString('en-PH', manilaDate)} by {customer.createdByEmail}
           </p>
@@ -114,8 +187,31 @@ export function CustomerDetail({
             </section>
           )}
 
+          {cms && customer.accounts.length > 0 && (
+            <section className="space-y-3">
+              <h2 className="font-semibold">Accounts</h2>
+              <ul className="divide-y rounded-xl border bg-card">
+                {customer.accounts.map((a) => (
+                  <li key={a.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
+                    <span className={cn('h-2 w-2 shrink-0 rounded-full', STATUS_META[a.status].dot)} aria-hidden />
+                    <div className="min-w-0 flex-1">
+                      <Link href={`/accounts/${a.id}`} className="font-medium hover:underline">
+                        {a.name}
+                      </Link>
+                      <p className="font-mono text-[11px] text-muted-foreground">{a.accountCode}</p>
+                    </div>
+                    <span className="text-xs text-muted-foreground">{[a.category?.label, a.type?.label, a.countryRegion?.label].filter(Boolean).join(' · ')}</span>
+                    {a.isReturning && <span className="rounded-full bg-info/12 px-2 py-0.5 text-[11px] font-medium text-info">Returning</span>}
+                    {a.reviewAction && <Hourglass className="h-3.5 w-3.5 text-warning" aria-label="Waiting for review" />}
+                    <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-medium', STATUS_META[a.status].soft)}>{STATUS_LABELS[a.status]}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           <section className="space-y-3">
-            <h2 className="font-semibold">Accounts and tickets</h2>
+            <h2 className="font-semibold">{cms ? 'Onboarding details and tickets' : 'Accounts and tickets'}</h2>
             {customer.accounts.length > 0 ? (
               <AccountsView accounts={customer.accounts} canSetGroup={canUse(role, 'leads')} />
             ) : (
@@ -126,13 +222,54 @@ export function CustomerDetail({
               </p>
             )}
           </section>
+
+          {cms && (
+            <section className="space-y-3">
+              <h2 className="font-semibold">Customer notes</h2>
+              <NotesPanel customerId={customer.id} accountId={null} notes={customer.notesLog} canAdd={cms.canEdit} />
+            </section>
+          )}
+
+          {cms && (
+            <section className="space-y-3">
+              <h2 className="font-semibold">History</h2>
+              <ActivityTable rows={cms.activity} />
+            </section>
+          )}
         </div>
 
         <aside className="space-y-6">
-          {mayChangeStatus && (
+          {mayChangeStatus && cms && (
             <section className="space-y-3 rounded-xl border bg-card p-4">
               <h2 className="font-semibold">Status</h2>
-              <StatusChanger customerId={customer.id} current={customer.status} />
+              {customer.reviewAction ? (
+                <p className="text-sm text-muted-foreground">Status changes are on hold until the pending review is confirmed or cancelled.</p>
+              ) : (
+                <StatusChanger
+                  kind="customer"
+                  id={customer.id}
+                  current={customer.status}
+                  terminationReasons={cms.terminationReasons}
+                  reviewed={cms.reviewed}
+                  reactivatable={customer.accounts.filter((a) => isTerminal(a.status)).map((a) => ({ id: a.id, name: a.name, status: a.status }))}
+                />
+              )}
+            </section>
+          )}
+
+          {cms?.canEdit && (
+            <section className="space-y-3 rounded-xl border bg-card p-4">
+              <h2 className="font-semibold">Details</h2>
+              <CustomerEditForm
+                customerId={customer.id}
+                initial={{
+                  name: customer.name,
+                  email: customer.email,
+                  notes: customer.notes,
+                  noPaymentYet: customer.noPaymentYet,
+                  paymentDate: customer.paymentDate ? dayString(customer.paymentDate) : null,
+                }}
+              />
             </section>
           )}
 
@@ -145,7 +282,9 @@ export function CustomerDetail({
                   <p className="font-medium">
                     {log.fromStatus ? `${STATUS_LABELS[log.fromStatus]} → ${STATUS_LABELS[log.toStatus]}` : `Created as ${STATUS_LABELS[log.toStatus]}`}
                   </p>
+                  {log.terminationReason && <p className="text-muted-foreground">{log.terminationReason.label}</p>}
                   {log.reason && <p className="whitespace-pre-wrap text-muted-foreground">{log.reason}</p>}
+                  {log.effectiveDate && <p className="text-xs text-muted-foreground">Effective {log.effectiveDate.toLocaleDateString('en-PH', manilaDate)}</p>}
                   <p className="text-xs text-muted-foreground">
                     {log.changedAt.toLocaleString('en-PH', manilaDateTime)} · {log.changedByEmail}
                   </p>

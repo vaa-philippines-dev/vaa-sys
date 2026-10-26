@@ -8,11 +8,17 @@ import { CUSTOMER_STATUSES, onboardingStage, type CustomerMatch, type CustomerSt
 
 const linkFields = { revokedAt: true, expiresAt: true, openedAt: true, submittedAt: true } as const
 
-export async function listCustomers(params: { q?: string; status?: string }) {
+// scope: the person's customer scope from lib/scope.ts (null = everyone).
+export async function listCustomers(params: { q?: string; status?: string; specialist?: string; review?: boolean; scope?: Prisma.CustomerWhereInput | null }) {
   const q = params.q?.trim()
   const status = CUSTOMER_STATUSES.includes(params.status as CustomerStatus) ? (params.status as CustomerStatus) : undefined
+  const scoped: Prisma.CustomerWhereInput = params.scope ?? {}
   const where: Prisma.CustomerWhereInput = {
+    AND: [scoped],
     ...(status ? { status } : {}),
+    // 'none' = no CS Specialist yet.
+    ...(params.specialist ? { assignedSpecialistEmail: params.specialist === 'none' ? null : params.specialist.toLowerCase() } : {}),
+    ...(params.review ? { reviewAction: { not: null } } : {}),
     ...(q
       ? {
           OR: [
@@ -34,7 +40,7 @@ export async function listCustomers(params: { q?: string; status?: string }) {
         tickets: { select: { requests: { select: { numberOfVas: true } } } },
       },
     }),
-    prisma.customer.groupBy({ by: ['status'], _count: { _all: true } }),
+    prisma.customer.groupBy({ by: ['status'], where: scoped, _count: { _all: true } }),
   ])
   const byStatus = Object.fromEntries(counts.map((c) => [c.status, c._count._all])) as Partial<Record<CustomerStatus, number>>
   return {
@@ -50,16 +56,18 @@ export async function listCustomers(params: { q?: string; status?: string }) {
   }
 }
 
-// Customer Management's overview: totals across every customer, and the
-// latest status changes for the activity feed.
-export async function customerPortfolio(now: Date) {
+// Customer Management's overview: totals across every customer the person
+// can see, and the latest status changes for the activity feed.
+export async function customerPortfolio(now: Date, scope: Prisma.CustomerWhereInput | null = null) {
   const weekAgo = new Date(now.getTime() - 7 * 86_400_000)
+  const customer = scope ?? {}
   const [accounts, vas, changesThisWeek, recent] = await Promise.all([
-    prisma.account.count(),
-    prisma.ticketRequest.aggregate({ _sum: { numberOfVas: true } }),
+    prisma.account.count({ where: { customer } }),
+    prisma.ticketRequest.aggregate({ where: { ticket: { customer } }, _sum: { numberOfVas: true } }),
     // Status changes only: a row with no fromStatus is a customer being created.
-    prisma.customerStatusLog.count({ where: { changedAt: { gte: weekAgo }, fromStatus: { not: null } } }),
+    prisma.customerStatusLog.count({ where: { changedAt: { gte: weekAgo }, fromStatus: { not: null }, customer } }),
     prisma.customerStatusLog.findMany({
+      where: { customer },
       orderBy: { changedAt: 'desc' },
       take: 8,
       select: {
@@ -86,12 +94,19 @@ export async function getCustomer(id: string) {
   const customer = await prisma.customer.findUnique({
     where: { id },
     include: {
-      statusLogs: { orderBy: { changedAt: 'desc' } },
+      statusLogs: { orderBy: { changedAt: 'desc' }, include: { terminationReason: { select: { label: true } } } },
       onboardingLinks: { orderBy: { createdAt: 'desc' } },
       submissions: { orderBy: { submittedAt: 'desc' }, select: { id: true, submittedAt: true } },
+      takeovers: { where: { cancelledAt: null }, orderBy: { startDate: 'desc' } },
+      notesLog: { where: { accountId: null }, orderBy: { createdAt: 'desc' } },
       accounts: {
         orderBy: { createdAt: 'asc' },
         include: {
+          category: { select: { label: true } },
+          type: { select: { label: true } },
+          countryRegion: { select: { label: true, timezone: true } },
+          contract: { select: { id: true, contractCode: true, name: true } },
+          managers: { orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] },
           contacts: { orderBy: { kind: 'asc' } },
           submission: { select: { submittedAt: true, part3: true, part3SubmittedAt: true, link: { select: { token: true, revokedAt: true } } } },
           tickets: { orderBy: { ticketNumber: 'asc' }, include: { requests: { orderBy: { lineNo: 'asc' } } } },
@@ -106,6 +121,16 @@ export async function getCustomer(id: string) {
 export async function countCustomers() {
   const [total, pending] = await Promise.all([prisma.customer.count(), prisma.customer.count({ where: { status: 'PENDING' } })])
   return { total, pending }
+}
+
+// Pending reviews waiting for a CS Manager: customers, plus accounts flagged
+// on their own (accounts flagged by their customer follow its review).
+export async function countPendingReviews() {
+  const [customers, accounts] = await Promise.all([
+    prisma.customer.count({ where: { reviewAction: { not: null } } }),
+    prisma.account.count({ where: { reviewAction: { not: null }, reviewFromCustomer: false } }),
+  ])
+  return customers + accounts
 }
 
 // New IDs keep the legacy CMS format and never reuse one that exists either

@@ -2,20 +2,35 @@
 
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
-import { KeyRound, Users } from 'lucide-react'
+import { Building2, CheckCheck, FileSignature, History, KeyRound, Settings2, UserCog, Users } from 'lucide-react'
 import { STATUS_META, STATUS_ORDER } from '@/components/cms/status-meta'
 import type { CustomerStatus } from '@/lib/customer-fields'
 import { cn } from '@/lib/utils'
 
-// Customer Management's sidebar nav: all customers, a view per status with
-// its live count, and Access for those who manage it.
-export function CmsNav({ total, byStatus, showAccess }: { total: number; byStatus: Record<CustomerStatus, number>; showAccess: boolean }) {
+const ICONS = {
+  customers: Users,
+  accounts: Building2,
+  specialists: UserCog,
+  approvals: CheckCheck,
+  contracts: FileSignature,
+  activity: History,
+  settings: Settings2,
+  access: KeyRound,
+} as const
+
+export type CmsNavItem = { href: string; label: string; icon: keyof typeof ICONS; count?: number; alert?: boolean }
+
+// Customer Management's sidebar nav: the pages this person may open (worked
+// out on the server from lib/permissions.ts), then a view per customer
+// status with its live count.
+export function CmsNav({ items, byStatus }: { items: CmsNavItem[]; byStatus: Record<CustomerStatus, number> }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const onList = pathname === '/customers'
   const status = onList ? searchParams.get('status') : null
-  // A customer's own page still belongs under "Customers".
-  const inCustomers = pathname === '/customers' || pathname.startsWith('/customers/')
+
+  const isActive = (href: string) =>
+    href === '/customers' ? (pathname === '/customers' || pathname.startsWith('/customers/')) && !status : pathname === href || pathname.startsWith(`${href}/`)
 
   const item = (active: boolean) =>
     cn(
@@ -26,24 +41,26 @@ export function CmsNav({ total, byStatus, showAccess }: { total: number; byStatu
   return (
     <div className="flex flex-col gap-5">
       <nav className="flex flex-col gap-0.5">
-        <Link href="/customers" className={item(inCustomers && !status)}>
-          <Users className="h-[15px] w-[15px]" strokeWidth={1.75} />
-          Customers
-          <span
-            className={cn(
-              'ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none tabular-nums',
-              inCustomers && !status ? 'bg-primary-foreground/15 text-primary-foreground' : 'bg-muted text-muted-foreground'
-            )}
-          >
-            {total}
-          </span>
-        </Link>
-        {showAccess && (
-          <Link href="/access" className={item(pathname === '/access')}>
-            <KeyRound className="h-[15px] w-[15px]" strokeWidth={1.75} />
-            Access
-          </Link>
-        )}
+        {items.map((n) => {
+          const Icon = ICONS[n.icon]
+          const active = isActive(n.href)
+          return (
+            <Link key={n.href} href={n.href} className={item(active)}>
+              <Icon className="h-[15px] w-[15px]" strokeWidth={1.75} />
+              {n.label}
+              {n.count !== undefined && (n.count > 0 || !n.alert) && (
+                <span
+                  className={cn(
+                    'ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none tabular-nums',
+                    active ? 'bg-primary-foreground/15 text-primary-foreground' : n.alert ? 'bg-warning/15 text-warning' : 'bg-muted text-muted-foreground'
+                  )}
+                >
+                  {n.count}
+                </span>
+              )}
+            </Link>
+          )
+        })}
       </nav>
 
       <div className="flex flex-col gap-0.5">

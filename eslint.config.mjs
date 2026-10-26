@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Reference copy of the legacy Apps Script CMS, not part of the app.
+    "legacy/**",
+    "src/generated/**",
   ]),
 ]);
 
