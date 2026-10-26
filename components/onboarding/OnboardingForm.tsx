@@ -9,10 +9,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { NativeSelect } from '@/components/ui/native-select'
 import { submitOnboarding, submitPart3 } from '@/app/onboarding/[token]/actions'
 import {
-  MAX_HOURS_PER_DAY,
-  MAX_HOURS_PER_WEEK,
-  MIN_HOURS_PER_DAY,
-  MIN_HOURS_PER_WEEK,
+  DEFAULT_MINIMUMS,
   PART3_MAX,
   PART3_MIN,
   PART3_SCENARIOS,
@@ -23,39 +20,85 @@ import {
   SCHEDULE_LABELS,
   SCHEDULE_TYPES,
   SERVICE_OFFERINGS,
-  TIME_ZONES,
-  TIME_ZONE_LABELS,
   WORK_DAYS,
   emptyPart1,
   emptyPart3,
   emptyVaRequest,
   firstIssue,
+  minimumIssues,
   nightDifferentialHours,
   part3AnswersSchema,
   part1Schema,
-  part2Schema,
+  part2SchemaFor,
   paymentMethodsFor,
-  phtShiftInZone,
+  phtToZoneTime,
   shiftHours,
+  time12,
+  timeZoneLabel,
+  zoneOnDate,
+  zoneTimeToPht,
   type OnboardingInput,
   type Part1Draft,
   type Part3Answers,
   type Platform,
+  type TimeZoneOption,
   type VaRequestDraft,
+  type WorkHourMinimums,
 } from '@/lib/onboarding-fields'
 import { cn } from '@/lib/utils'
 
 const STEPS = ['Customer profile', 'Skill requirements', 'VA personality', 'Review'] as const
 const TIME_RE = /^\d{2}:\d{2}$/
 
-function Field({ id, label, required, hint, className, children }: { id: string; label: string; required?: boolean; hint?: string; className?: string; children: React.ReactNode }) {
+function Field({
+  id,
+  label,
+  required,
+  hint,
+  error,
+  noMarker,
+  className,
+  children,
+}: {
+  id: string
+  label: string
+  required?: boolean
+  hint?: string
+  // Shown in red under the field, e.g. hours below the minimum.
+  error?: string
+  noMarker?: boolean
+  className?: string
+  children: React.ReactNode
+}) {
   return (
     <div className={cn('space-y-1.5', className)}>
       <Label htmlFor={id}>
-        {label} {required ? <span className="text-destructive">*</span> : <span className="font-normal text-muted-foreground">(optional)</span>}
+        {label} {noMarker ? null : required ? <span className="text-destructive">*</span> : <span className="font-normal text-muted-foreground">(optional)</span>}
       </Label>
       {children}
+      {error && (
+        <p id={`${id}-error`} className="text-xs font-medium text-destructive">
+          {error}
+        </p>
+      )}
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  )
+}
+
+// An input with example text drawn over it while it is empty. The example is
+// not the input's placeholder, so screen readers don't read it out as if it
+// were filled-in data. className sizes the wrapper.
+function ExampleInput({ example, className, ...props }: React.ComponentProps<typeof Input> & { example: string }) {
+  const empty = props.value === '' || props.value == null
+  return (
+    <div className={cn('relative', className)}>
+      <Input {...props} />
+      {empty && (
+        <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center truncate text-base text-muted-foreground md:text-sm">
+          {example}
+        </span>
+      )}
     </div>
   )
 }
@@ -110,11 +153,15 @@ const num = (v: string) => (v === '' ? null : Number(v))
 const numValue = (v: number | null) => (v == null || Number.isNaN(v) ? '' : v)
 const toggle = <T,>(list: T[], item: T, order: readonly T[]) => (list.includes(item) ? list.filter((x) => x !== item) : order.filter((x) => x === item || list.includes(x)))
 
-function scheduleSummary(r: VaRequestDraft) {
+function scheduleSummary(r: VaRequestDraft, timeZone: string) {
   const days = r.workDays.join(', ')
   if (r.scheduleType === 'WEEKLY_FLEXIBLE') return `${r.hoursPerWeek} hours a week, flexible`
+  if (r.scheduleType === 'MONTHLY') return `${r.hoursPerMonth} hours a month, flexible`
   if (r.scheduleType === 'DAILY_FLEXIBLE') return `${r.hoursPerDay} hours a day, flexible (${days})`
-  if (r.scheduleType === 'DAILY_FIXED') return `${r.startTimePht}–${r.endTimePht} PH time (${days})`
+  if (r.scheduleType === 'DAILY_FIXED') {
+    const local = `${time12(phtToZoneTime(r.startTimePht, timeZone, r.targetStartDate))}–${time12(phtToZoneTime(r.endTimePht, timeZone, r.targetStartDate))}`
+    return `${local} your time, ${time12(r.startTimePht)}–${time12(r.endTimePht)} Philippine time (${days})`
+  }
   if (r.scheduleType === 'PROJECT') return `${r.projectHours} project hours`
   return ''
 }
@@ -217,11 +264,17 @@ export function OnboardingForm({
   customerCode,
   prefillEmail,
   part3Only,
+  timeZones = [],
+  minimums,
 }: {
   token: string
   customerName: string
   customerCode: string
   prefillEmail: string | null
+  // Every time zone, labelled by UTC offset (built on the server).
+  timeZones?: TimeZoneOption[]
+  // Work hour type minimums from Settings.
+  minimums?: WorkHourMinimums | null
   // The form is in and only Part 3 is left. The page re-renders with this
   // set right after a submission that skipped Part 3, so the thank-you
   // screen below stays up instead of jumping straight to Part 3.
@@ -236,6 +289,8 @@ export function OnboardingForm({
   const [done, setDone] = useState(false)
   const [showPart3, setShowPart3] = useState(false)
   const [saving, start] = useTransition()
+  const min = minimums ?? DEFAULT_MINIMUMS
+  const timeZone = p1.company.timeZone
 
   const setPrimary = (patch: Partial<Part1Draft['primary']>) =>
     setP1((v) => {
@@ -274,7 +329,7 @@ export function OnboardingForm({
     go(1)
   }
   const nextFromPart2 = () => {
-    const parsed = part2Schema.safeParse({ requests })
+    const parsed = part2SchemaFor(min).safeParse({ requests })
     if (!parsed.success) return setError(firstIssue(parsed.error, 'VA service'))
     go(2)
   }
@@ -366,13 +421,13 @@ export function OnboardingForm({
                 <Input id="p-last" value={p1.primary.lastName} onChange={(e) => setPrimary({ lastName: e.target.value })} autoComplete="family-name" />
               </Field>
               <Field id="p-role" label="Role" required>
-                <Input id="p-role" value={p1.primary.role} onChange={(e) => setPrimary({ role: e.target.value })} placeholder="e.g. Owner, CEO" autoComplete="organization-title" />
+                <ExampleInput id="p-role" value={p1.primary.role} onChange={(e) => setPrimary({ role: e.target.value })} example="e.g. Owner, CEO" autoComplete="organization-title" />
               </Field>
               <Field id="p-email" label="Email" required>
                 <Input id="p-email" type="email" value={p1.primary.email} onChange={(e) => setPrimary({ email: e.target.value })} autoComplete="email" />
               </Field>
               <Field id="p-wa" label="WhatsApp number" required hint="Include the country code.">
-                <Input id="p-wa" type="tel" value={p1.primary.whatsapp} onChange={(e) => setPrimary({ whatsapp: e.target.value })} placeholder="+1 555 123 4567" autoComplete="tel" />
+                <ExampleInput id="p-wa" type="tel" value={p1.primary.whatsapp} onChange={(e) => setPrimary({ whatsapp: e.target.value })} example="+1 555 123 4567" autoComplete="tel" />
               </Field>
               <Field id="p-region" label="Region of residence" required>
                 <NativeSelect id="p-region" value={p1.primary.region} onChange={(e) => setPrimary({ region: e.target.value as Part1Draft['primary']['region'] })}>
@@ -408,12 +463,12 @@ export function OnboardingForm({
                 <Textarea id="c-address" rows={2} value={p1.company.businessAddress} onChange={(e) => setCompany({ businessAddress: e.target.value })} autoComplete="street-address" />
               </Field>
               <Field id="c-web" label="Website URL" hint="If applicable.">
-                <Input id="c-web" value={p1.company.website} onChange={(e) => setCompany({ website: e.target.value })} placeholder="https://" />
+                <ExampleInput id="c-web" value={p1.company.website} onChange={(e) => setCompany({ website: e.target.value })} example="https://" />
               </Field>
-              <Field id="c-tz" label="Your time zone">
+              <Field id="c-tz" label="Your time zone" required hint="Your VAs’ fixed work hours are entered in this time zone.">
                 <NativeSelect id="c-tz" value={p1.company.timeZone} onChange={(e) => setCompany({ timeZone: e.target.value })}>
                   <option value="">Choose a time zone</option>
-                  {TIME_ZONES.map((t) => (
+                  {timeZones.map((t) => (
                     <option key={t.value} value={t.value}>
                       {t.label}
                     </option>
@@ -443,16 +498,16 @@ export function OnboardingForm({
                   <Input id="s-email" type="email" value={p1.secondary.email} onChange={(e) => setSecondary({ email: e.target.value })} />
                 </Field>
                 <Field id="s-wa" label="WhatsApp number">
-                  <Input id="s-wa" type="tel" value={p1.secondary.whatsapp} onChange={(e) => setSecondary({ whatsapp: e.target.value })} placeholder="+1 555 123 4567" />
+                  <ExampleInput id="s-wa" type="tel" value={p1.secondary.whatsapp} onChange={(e) => setSecondary({ whatsapp: e.target.value })} example="+1 555 123 4567" />
                 </Field>
               </div>
             )}
           </Section>
 
-          <Section title="Your business">
+          <Section title="Your business" description="Optional.">
             <fieldset className="space-y-2">
               <legend className="text-sm font-medium">
-                Which platforms will the VA work on? <span className="text-destructive">*</span>
+                Which platforms will the VA work on? <span className="font-normal text-muted-foreground">(optional)</span>
               </legend>
               <div className="grid gap-2 text-sm sm:grid-cols-2">
                 {PLATFORMS.map((p) => (
@@ -468,7 +523,7 @@ export function OnboardingForm({
                 ))}
               </div>
               {p1.business.platforms.includes('Other') && (
-                <Input aria-label="Other platform" value={p1.business.platformOther} onChange={(e) => setBusiness({ platformOther: e.target.value })} placeholder="Which other platform?" className="sm:max-w-sm" />
+                <ExampleInput aria-label="Other platform" value={p1.business.platformOther} onChange={(e) => setBusiness({ platformOther: e.target.value })} example="Which other platform?" className="sm:max-w-sm" />
               )}
             </fieldset>
             <Field id="b-other" label="Any other information you would like to share?" hint="Are you doing FBA or FBM? Are you a Private Label Seller or Reseller?">
@@ -477,6 +532,9 @@ export function OnboardingForm({
           </Section>
 
           <Section title="Invoice contact">
+            <Field id="i-company" label="Company name" noMarker hint="Taken from Company above. Change it there." className="sm:max-w-sm">
+              <Input id="i-company" value={p1.company.companyName} readOnly aria-readonly="true" tabIndex={-1} className="bg-muted/60 text-muted-foreground" />
+            </Field>
             <Choice name="invoice" legend="Who should invoices go to?" value={p1.invoice.source} onChange={(source) => setInvoice({ source })} options={invoiceOptions} />
             {p1.invoice.source === 'OTHER' && (
               <div className="grid gap-4 sm:grid-cols-2">
@@ -487,7 +545,7 @@ export function OnboardingForm({
                   <Input id="i-last" value={p1.invoice.lastName} onChange={(e) => setInvoice({ lastName: e.target.value })} />
                 </Field>
                 <Field id="i-role" label="Role" required>
-                  <Input id="i-role" value={p1.invoice.role} onChange={(e) => setInvoice({ role: e.target.value })} placeholder="e.g. Accountant" />
+                  <ExampleInput id="i-role" value={p1.invoice.role} onChange={(e) => setInvoice({ role: e.target.value })} example="e.g. Accountant" />
                 </Field>
                 <Field id="i-email" label="Email" required>
                   <Input id="i-email" type="email" value={p1.invoice.email} onChange={(e) => setInvoice({ email: e.target.value })} />
@@ -540,7 +598,7 @@ export function OnboardingForm({
               )}
               {p1.payment.method === 'CREDIT_CARD' && (
                 <Field id="pay-country" label="Country and state of residence" required hint="We need this to send you a credit card payment request.">
-                  <Input id="pay-country" value={p1.payment.billingCountry} onChange={(e) => setPayment({ billingCountry: e.target.value })} placeholder="e.g. United States, Texas" autoComplete="country-name" />
+                  <ExampleInput id="pay-country" value={p1.payment.billingCountry} onChange={(e) => setPayment({ billingCountry: e.target.value })} example="e.g. United States, Texas" autoComplete="country-name" />
                 </Field>
               )}
             </div>
@@ -550,15 +608,25 @@ export function OnboardingForm({
 
       {step === 1 && (
         <div className="space-y-4">
+          <div className="rounded-xl border bg-card px-4 py-3 text-sm">
+            <p>
+              Your time zone: <strong className="font-medium">{timeZoneLabel(timeZone)}</strong>{' '}
+              <button type="button" onClick={() => go(0)} className="text-primary underline-offset-2 hover:underline">
+                Change
+              </button>
+            </p>
+            <p className="text-xs text-muted-foreground">Fixed start and end times are entered in this time zone and converted to Philippine time (UTC+08:00) for your VA.</p>
+          </div>
           <p className="text-sm text-muted-foreground">
             Tell us about the services you would like to avail. This guides us in matching you with a Virtual Assistant whose skills best fit your needs. Add a separate VA service for each
-            service type. All working times are in <strong>Philippine time (UTC+8)</strong>.
+            service type.
           </p>
           {requests.map((r, i) => {
             const fixedTimes = r.scheduleType === 'DAILY_FIXED' && TIME_RE.test(r.startTimePht) && TIME_RE.test(r.endTimePht)
             const nightHours = fixedTimes ? nightDifferentialHours(r.startTimePht, r.endTimePht) : 0
-            const local = fixedTimes ? phtShiftInZone(r.startTimePht, r.endTimePht, p1.company.timeZone) : null
             const daily = r.scheduleType === 'DAILY_FIXED' || r.scheduleType === 'DAILY_FLEXIBLE'
+            const below = minimumIssues(r, min)
+            const invalid = (field: keyof typeof below) => (below[field] ? { 'aria-invalid': true, 'aria-describedby': `r${i}-${field}-error` } : {})
             return (
               <section key={i} className="space-y-4 rounded-xl border bg-card p-5">
                 <div className="flex items-center justify-between">
@@ -595,8 +663,8 @@ export function OnboardingForm({
                 <div className="space-y-4 rounded-lg bg-muted/40 p-4">
                   <div className="space-y-1 text-xs text-muted-foreground">
                     <p>
-                      <strong className="font-medium text-foreground">Schedule.</strong> Minimum is {MIN_HOURS_PER_DAY}H a day, 5 days a week ({MIN_HOURS_PER_WEEK}H per week); maximum is{' '}
-                      {MAX_HOURS_PER_DAY}H a day, 5 days a week ({MAX_HOURS_PER_WEEK}H per week).
+                      <strong className="font-medium text-foreground">Minimum hours.</strong> {min.hoursPerDay}H a day and {min.hoursPerWeek}H a week (e.g. {min.hoursPerDay}H a day, 5 days a
+                      week), {min.hoursPerMonth}H a month, or {min.projectHours} project hours.
                     </p>
                     <p className="flex items-start gap-1">
                       <Moon className="mt-0.5 h-3 w-3 shrink-0" /> Any hours that fall between 10 PM and 6 AM Philippine time are subject to night differential rates.
@@ -615,52 +683,87 @@ export function OnboardingForm({
                     </Field>
 
                     {r.scheduleType === 'WEEKLY_FLEXIBLE' && (
-                      <Field id={`r${i}-hpw`} label="Work hours per week" required>
-                        <Input
-                          id={`r${i}-hpw`}
+                      <Field id={`r${i}-hoursPerWeek`} label="Work hours per week" required error={below.hoursPerWeek}>
+                        <ExampleInput
+                          id={`r${i}-hoursPerWeek`}
                           type="number"
-                          min={MIN_HOURS_PER_WEEK}
-                          max={MAX_HOURS_PER_WEEK}
+                          min={0}
                           value={numValue(r.hoursPerWeek)}
                           onChange={(e) => setRequest(i, { hoursPerWeek: num(e.target.value) })}
-                          placeholder="e.g. 40"
+                          example="e.g. 40"
+                          {...invalid('hoursPerWeek')}
+                        />
+                      </Field>
+                    )}
+                    {r.scheduleType === 'MONTHLY' && (
+                      <Field id={`r${i}-hoursPerMonth`} label="Work hours per month" required error={below.hoursPerMonth}>
+                        <ExampleInput
+                          id={`r${i}-hoursPerMonth`}
+                          type="number"
+                          min={0}
+                          value={numValue(r.hoursPerMonth)}
+                          onChange={(e) => setRequest(i, { hoursPerMonth: num(e.target.value) })}
+                          example="e.g. 80"
+                          {...invalid('hoursPerMonth')}
                         />
                       </Field>
                     )}
                     {r.scheduleType === 'DAILY_FLEXIBLE' && (
-                      <Field id={`r${i}-hpd`} label="Work hours per day" required>
-                        <Input
-                          id={`r${i}-hpd`}
+                      <Field id={`r${i}-hoursPerDay`} label="Work hours per day" required error={below.hoursPerDay}>
+                        <ExampleInput
+                          id={`r${i}-hoursPerDay`}
                           type="number"
-                          min={MIN_HOURS_PER_DAY}
-                          max={MAX_HOURS_PER_DAY}
+                          min={0}
                           step={0.5}
                           value={numValue(r.hoursPerDay)}
                           onChange={(e) => setRequest(i, { hoursPerDay: num(e.target.value) })}
-                          placeholder="e.g. 5"
+                          example="e.g. 5"
+                          {...invalid('hoursPerDay')}
                         />
                       </Field>
                     )}
                     {r.scheduleType === 'PROJECT' && (
-                      <Field id={`r${i}-project`} label="Project hours" required>
-                        <Input id={`r${i}-project`} type="number" min={1} value={numValue(r.projectHours)} onChange={(e) => setRequest(i, { projectHours: num(e.target.value) })} placeholder="e.g. 20" />
+                      <Field id={`r${i}-projectHours`} label="Project hours" required error={below.projectHours}>
+                        <ExampleInput
+                          id={`r${i}-projectHours`}
+                          type="number"
+                          min={0}
+                          value={numValue(r.projectHours)}
+                          onChange={(e) => setRequest(i, { projectHours: num(e.target.value) })}
+                          example="e.g. 20"
+                          {...invalid('projectHours')}
+                        />
                       </Field>
                     )}
                     {r.scheduleType === 'DAILY_FIXED' && (
                       <div className="space-y-2 sm:col-span-2">
                         <div className="grid gap-4 sm:grid-cols-2">
-                          <Field id={`r${i}-start`} label="Start time (Philippine time)" required>
-                            <Input id={`r${i}-start`} type="time" value={r.startTimePht} onChange={(e) => setRequest(i, { startTimePht: e.target.value })} />
+                          <Field id={`r${i}-start`} label={`Start time (${zoneOnDate(timeZone, r.targetStartDate)})`} required>
+                            <Input
+                              id={`r${i}-start`}
+                              type="time"
+                              value={phtToZoneTime(r.startTimePht, timeZone, r.targetStartDate)}
+                              onChange={(e) => setRequest(i, { startTimePht: zoneTimeToPht(e.target.value, timeZone, r.targetStartDate) })}
+                            />
                           </Field>
-                          <Field id={`r${i}-end`} label="End time (Philippine time)" required>
-                            <Input id={`r${i}-end`} type="time" value={r.endTimePht} onChange={(e) => setRequest(i, { endTimePht: e.target.value })} />
+                          <Field id={`r${i}-endTimePht`} label={`End time (${zoneOnDate(timeZone, r.targetStartDate)})`} required error={below.endTimePht}>
+                            <Input
+                              id={`r${i}-endTimePht`}
+                              type="time"
+                              value={phtToZoneTime(r.endTimePht, timeZone, r.targetStartDate)}
+                              onChange={(e) => setRequest(i, { endTimePht: zoneTimeToPht(e.target.value, timeZone, r.targetStartDate) })}
+                              {...invalid('endTimePht')}
+                            />
                           </Field>
                         </div>
                         {fixedTimes && (
                           <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                             <span>
-                              {shiftHours(r.startTimePht, r.endTimePht)} hours a day
-                              {local && `, which is ${local[0]} – ${local[1]} ${TIME_ZONE_LABELS[p1.company.timeZone]} time`}.
+                              Philippine time:{' '}
+                              <strong className="font-medium text-foreground">
+                                {time12(r.startTimePht)} – {time12(r.endTimePht)}
+                              </strong>{' '}
+                              ({shiftHours(r.startTimePht, r.endTimePht)} hours a day).
                             </span>
                             {nightHours > 0 && (
                               <span className="inline-flex items-center gap-1 text-warning">
@@ -672,7 +775,7 @@ export function OnboardingForm({
                       </div>
                     )}
                     {daily && (
-                      <fieldset className="space-y-1.5 sm:col-span-2">
+                      <fieldset className="space-y-1.5 sm:col-span-2" aria-describedby={below.workDays ? `r${i}-workDays-error` : undefined}>
                         <legend className="text-sm font-medium">
                           Work days <span className="text-destructive">*</span>
                         </legend>
@@ -685,13 +788,22 @@ export function OnboardingForm({
                                 type="button"
                                 aria-pressed={on}
                                 onClick={() => toggleDay(i, d)}
-                                className={cn('h-8 min-w-11 rounded-lg border px-2 text-sm', on ? 'border-primary bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-muted')}
+                                className={cn(
+                                  'h-8 min-w-11 rounded-lg border px-2 text-sm',
+                                  on ? 'border-primary bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-muted',
+                                  below.workDays && 'ring-2 ring-destructive/30'
+                                )}
                               >
                                 {d}
                               </button>
                             )
                           })}
                         </div>
+                        {below.workDays && (
+                          <p id={`r${i}-workDays-error`} className="text-xs font-medium text-destructive">
+                            {below.workDays}
+                          </p>
+                        )}
                       </fieldset>
                     )}
                     {r.scheduleType && (
@@ -703,11 +815,22 @@ export function OnboardingForm({
                 </div>
 
                 <div className="grid gap-4">
-                  <Field id={`r${i}-tasks`} label="What will be the tasks/requests for your VA?" required>
+                  <Field id={`r${i}-tracker`} label="Will the VA be working with a task tracker?" className="sm:max-w-xs">
+                    <NativeSelect
+                      id={`r${i}-tracker`}
+                      value={r.taskTracker == null ? '' : r.taskTracker ? 'YES' : 'NO'}
+                      onChange={(e) => setRequest(i, { taskTracker: e.target.value === '' ? null : e.target.value === 'YES' })}
+                    >
+                      <option value="">Choose one</option>
+                      <option value="YES">Yes</option>
+                      <option value="NO">No</option>
+                    </NativeSelect>
+                  </Field>
+                  <Field id={`r${i}-tasks`} label="What will be the tasks/requests for your VA?">
                     <Textarea id={`r${i}-tasks`} value={r.tasks} onChange={(e) => setRequest(i, { tasks: e.target.value })} />
                   </Field>
                   <Field id={`r${i}-tools`} label="What are the tools that will be used by the VA?">
-                    <Input id={`r${i}-tools`} value={r.tools} onChange={(e) => setRequest(i, { tools: e.target.value })} placeholder="e.g. Seller Central, Helium 10, Google Sheets" />
+                    <ExampleInput id={`r${i}-tools`} value={r.tools} onChange={(e) => setRequest(i, { tools: e.target.value })} example="e.g. Seller Central, Helium 10, Google Sheets" />
                   </Field>
                 </div>
               </section>
@@ -763,12 +886,16 @@ export function OnboardingForm({
             <dd>
               {p1.company.companyName}
               {p1.company.dbaName && ` (DBA ${p1.company.dbaName})`}
-              {p1.company.timeZone && ` · ${TIME_ZONE_LABELS[p1.company.timeZone] ?? p1.company.timeZone}`}
+              {timeZone && ` · ${timeZoneLabel(timeZone)}`}
             </dd>
             <dt className="text-muted-foreground">Business address</dt>
             <dd className="whitespace-pre-wrap">{p1.company.businessAddress}</dd>
-            <dt className="text-muted-foreground">Platforms</dt>
-            <dd>{p1.business.platforms.map((p) => (p === 'Other' && p1.business.platformOther ? p1.business.platformOther : p)).join(', ')}</dd>
+            {p1.business.platforms.length > 0 && (
+              <>
+                <dt className="text-muted-foreground">Platforms</dt>
+                <dd>{p1.business.platforms.map((p) => (p === 'Other' && p1.business.platformOther ? p1.business.platformOther : p)).join(', ')}</dd>
+              </>
+            )}
             {p1.business.otherInfo && (
               <>
                 <dt className="text-muted-foreground">Other information</dt>
@@ -795,7 +922,7 @@ export function OnboardingForm({
           <ul className="space-y-1 text-sm">
             {requests.map((r, i) => (
               <li key={i} className="rounded-lg border px-3 py-2">
-                {r.numberOfVas} × {r.service}: {scheduleSummary(r)}
+                {r.numberOfVas} × {r.service}: {scheduleSummary(r, timeZone)}
                 {r.additionalHours && ` + ${r.additionalHours}`}, starting {r.targetStartDate}
               </li>
             ))}

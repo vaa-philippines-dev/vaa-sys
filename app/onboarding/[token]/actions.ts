@@ -4,7 +4,8 @@ import { revalidatePath } from 'next/cache'
 import { prisma } from '@/lib/prisma'
 import { findLink } from '@/lib/onboarding'
 import { generateAccountCode } from '@/lib/customers'
-import { firstIssue, nightDifferentialHours, onboardingSchema, part3AnswersSchema, shiftHours, type OnboardingInput, type Part3Answers, type VaRequest } from '@/lib/onboarding-fields'
+import { firstIssue, nightDifferentialHours, onboardingSchemaFor, part3AnswersSchema, shiftHours, type OnboardingInput, type Part3Answers, type VaRequest } from '@/lib/onboarding-fields'
+import { getWorkHourMinimums } from '@/lib/settings'
 import type { ActionResult } from '@/lib/customer-fields'
 
 // Public: whoever holds the link token may submit once. There is no session;
@@ -14,7 +15,8 @@ import type { ActionResult } from '@/lib/customer-fields'
 // One submission makes, in a single transaction:
 // - the raw OnboardingSubmission (exactly what was sent),
 // - the customer's Account with its contacts (Part 1),
-// - a main Ticket with one sub-ticket per VA request (Part 2),
+// - a main Ticket with one sub-ticket per VA (Part 2): a service asking for
+//   2 VAs becomes two sub-tickets, so each VA gets its own request group,
 // - Part 3 answers on the submission, if the customer filled them in now.
 export async function submitOnboarding(token: string, input: OnboardingInput): Promise<ActionResult> {
   const { state, link } = await findLink(token)
@@ -22,7 +24,7 @@ export async function submitOnboarding(token: string, input: OnboardingInput): P
   if (state === 'SUBMITTED' || state === 'PART3_OPEN') return { ok: false, error: 'This form has already been submitted. Thank you!' }
   if (state !== 'OPEN') return { ok: false, error: 'This link has expired. Please reply to our email and we’ll send you a new one.' }
 
-  const parsed = onboardingSchema.safeParse(input)
+  const parsed = onboardingSchemaFor(await getWorkHourMinimums()).safeParse(input)
   if (!parsed.success) {
     const inPart2 = parsed.error.issues[0]?.path[0] === 'part2'
     return { ok: false, error: firstIssue(parsed.error, inPart2 ? 'VA service' : '') }
@@ -116,7 +118,7 @@ export async function submitOnboarding(token: string, input: OnboardingInput): P
           accountId: account.id,
           submissionId: submission.id,
           createdByEmail: 'onboarding-form',
-          requests: { create: part2.requests.map((r, i) => requestRow(r, i + 1)) },
+          requests: { create: part2.requests.flatMap((r) => Array.from({ length: r.numberOfVas }, () => r)).map((r, i) => requestRow(r, i + 1)) },
         },
       })
 
@@ -139,7 +141,7 @@ export async function submitOnboarding(token: string, input: OnboardingInput): P
   return { ok: true, data: null }
 }
 
-// One VA request as a sub-ticket row. Hours are stored per schedule type;
+// One VA as a sub-ticket row. Hours are stored per schedule type;
 // a fixed shift's hours and night differential are worked out from its times.
 // The platform now lives on the account, so new rows leave it empty.
 function requestRow(r: VaRequest, lineNo: number) {
@@ -149,9 +151,10 @@ function requestRow(r: VaRequest, lineNo: number) {
   return {
     lineNo,
     service: r.service,
-    numberOfVas: r.numberOfVas,
+    numberOfVas: 1,
     scheduleType: r.scheduleType,
     hoursPerWeek: r.scheduleType === 'WEEKLY_FLEXIBLE' ? r.hoursPerWeek : null,
+    hoursPerMonth: r.scheduleType === 'MONTHLY' ? r.hoursPerMonth : null,
     hoursPerDay: r.scheduleType === 'DAILY_FLEXIBLE' ? r.hoursPerDay : fixed ? shiftHours(r.startTimePht, r.endTimePht) : null,
     projectHours: r.scheduleType === 'PROJECT' ? r.projectHours : null,
     startTimePht: fixed ? r.startTimePht : null,
@@ -161,8 +164,10 @@ function requestRow(r: VaRequest, lineNo: number) {
     additionalHours: r.additionalHours || null,
     // Date.UTC, never new Date('YYYY-MM-DD') parsing in local time.
     targetStartDate: new Date(Date.UTC(y, m - 1, d)),
+    // The column predates tasks being optional, so no answer is stored as ''.
     tasks: r.tasks,
     tools: r.tools || null,
+    taskTracker: r.taskTracker,
   }
 }
 

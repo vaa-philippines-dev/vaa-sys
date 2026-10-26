@@ -18,13 +18,15 @@ export const ROLE_DESCRIPTIONS: Record<AccessRole, string> = {
   LEAD_MANAGER: 'Lead Management. Can view customers.',
 }
 
-export type Area = 'customers' | 'customerStatus' | 'leads' | 'access'
+export type Area = 'customers' | 'customerStatus' | 'leads' | 'access' | 'settings'
 
 const AREA_ROLES: Record<Area, readonly AccessRole[]> = {
   customers: ['ADMIN', 'CS_MANAGER', 'CUSTOMER_SPECIALIST', 'LEAD_MANAGER'],
   customerStatus: ['ADMIN', 'CS_MANAGER', 'CUSTOMER_SPECIALIST'],
   leads: ['ADMIN', 'LEAD_MANAGER'],
   access: ['ADMIN', 'CS_MANAGER'],
+  // General settings, e.g. the onboarding form's work hour minimums.
+  settings: ['ADMIN'],
 }
 
 export function canUse(role: AccessRole | null | undefined, area: Area): boolean {

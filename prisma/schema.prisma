@@ -267,6 +267,7 @@ enum ScheduleType {
   DAILY_FLEXIBLE
   DAILY_FIXED
   PROJECT
+  MONTHLY
 
   @@schema("vaa_sys")
 }
@@ -311,6 +312,9 @@ model TicketRequest {
   workDays              String[]     @map("work_days")
   nightDifferential     Boolean      @default(false) @map("night_differential")
   projectHours          Decimal?     @map("project_hours") @db.Decimal(6, 2)
+  hoursPerMonth         Decimal?     @map("hours_per_month") @db.Decimal(6, 2)
+  // "Will the VA be working with a task tracker?"
+  taskTracker           Boolean?     @map("task_tracker")
   // Free text, e.g. "1H Sat or Sun". additionalHoursPerDay is older requests only.
   additionalHours       String?      @map("additional_hours")
   additionalHoursPerDay Decimal?     @map("additional_hours_per_day") @db.Decimal(4, 2)
@@ -324,5 +328,19 @@ model TicketRequest {
 
   @@unique([ticketId, lineNo])
   @@map("ticket_requests")
+  @@schema("vaa_sys")
+}
+
+// ── Settings ─────────────────────────────────────────────────────
+
+// General settings admins edit in the app, one row per key (e.g. the work
+// hour type minimums). A missing row means the app's built-in defaults.
+model AppSetting {
+  key            String   @id
+  value          Json
+  updatedByEmail String?  @map("updated_by_email")
+  updatedAt      DateTime @default(now()) @map("updated_at")
+
+  @@map("app_settings")
   @@schema("vaa_sys")
 }

@@ -2,14 +2,14 @@
 
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
-import { Plus, Users } from 'lucide-react'
+import { Plus, Settings, Users } from 'lucide-react'
 import { STAGE_COLUMNS, STAGE_META } from '@/components/lms/stage-meta'
 import type { OnboardingStage } from '@/lib/customer-fields'
 import { cn } from '@/lib/utils'
 
 // The LMS sidebar's nav: the board as the main item, onboarding stages as
 // "Views" (each a filter on the board, with its live count).
-export function LmsNav({ total, byStage }: { total: number; byStage: Record<OnboardingStage, number> }) {
+export function LmsNav({ total, byStage, showSettings }: { total: number; byStage: Record<OnboardingStage, number>; showSettings?: boolean }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const onBoard = pathname === '/leads'
@@ -40,6 +40,18 @@ export function LmsNav({ total, byStage }: { total: number; byStage: Record<Onbo
           <Plus className="h-[15px] w-[15px]" strokeWidth={1.75} />
           New lead
         </Link>
+        {showSettings && (
+          <Link
+            href="/leads/settings"
+            className={cn(
+              'flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] font-medium',
+              pathname === '/leads/settings' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+            )}
+          >
+            <Settings className="h-[15px] w-[15px]" strokeWidth={1.75} />
+            Settings
+          </Link>
+        )}
       </nav>
 
       <div className="flex flex-col gap-0.5">

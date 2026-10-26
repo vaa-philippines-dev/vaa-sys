@@ -10,8 +10,11 @@ import {
   PAYMENT_LABELS,
   REQUEST_GROUP_LABELS,
   SCHEDULE_LABELS,
-  TIME_ZONE_LABELS,
   part3Totals,
+  phtToZoneTime,
+  time12,
+  timeZoneLabel,
+  zoneOnDate,
   subTicketCode,
   ticketCode,
   type Part3Answers,
@@ -39,12 +42,20 @@ function Rows({ items }: { items: [string, React.ReactNode][] }) {
 
 const hours = (v: unknown) => (v == null ? null : Number(v))
 
-function schedule(r: Request) {
+function schedule(r: Request, timeZone: string | null) {
   if (r.scheduleType === 'WEEKLY_FLEXIBLE') return `${hours(r.hoursPerWeek)} h a week, any time`
+  if (r.scheduleType === 'MONTHLY') return `${hours(r.hoursPerMonth)} h a month, any time`
   if (r.scheduleType === 'PROJECT') return `${hours(r.projectHours)} h in total`
   const days = r.workDays.join(', ')
   if (r.scheduleType === 'DAILY_FLEXIBLE') return `${hours(r.hoursPerDay)} h a day, any time · ${days}`
-  return `${r.startTimePht}–${r.endTimePht} PH time (${hours(r.hoursPerDay)} h) · ${days}`
+  const pht = `${time12(r.startTimePht ?? '')}–${time12(r.endTimePht ?? '')} PH time (${hours(r.hoursPerDay)} h)`
+  // The customer entered it in their own zone; show that too.
+  const start = r.targetStartDate.toISOString().slice(0, 10)
+  const local =
+    timeZone && timeZone !== 'Asia/Manila'
+      ? ` = ${time12(phtToZoneTime(r.startTimePht ?? '', timeZone, start))}–${time12(phtToZoneTime(r.endTimePht ?? '', timeZone, start))} ${zoneOnDate(timeZone, start)}`
+      : ''
+  return `${pht}${local} · ${days}`
 }
 
 // Part 3 of the onboarding form: the answers, or the link to finish it.
@@ -141,7 +152,7 @@ export function AccountsView({ accounts, canSetGroup }: { accounts: Account[]; c
                     ['DBA name', a.dbaName],
                     ['Business address', a.businessAddress ? <span key="addr" className="whitespace-pre-wrap">{a.businessAddress}</span> : null],
                     ['Website', a.website],
-                    ['Time zone', a.timeZone ? TIME_ZONE_LABELS[a.timeZone] ?? a.timeZone : null],
+                    ['Time zone', a.timeZone ? timeZoneLabel(a.timeZone) : null],
                     ['Lives in', primary?.region],
                     ['Platforms', (a.platforms ?? []).map((p) => (p === 'Other' && a.platformOther ? `Other: ${a.platformOther}` : p)).join(', ')],
                     ['Invoices to', `${a.invoiceContactName ?? ''}${a.invoiceContactRole ? `, ${a.invoiceContactRole}` : ''} (${a.invoiceContactEmail})`],
@@ -191,7 +202,9 @@ export function AccountsView({ accounts, canSetGroup }: { accounts: Account[]; c
                         <div>
                           <p className="font-mono text-xs text-muted-foreground">{subTicketCode(t.ticketNumber, r.lineNo)}</p>
                           <p className="text-sm font-medium">
-                            {r.numberOfVas} × {r.service}{r.platform && ` on ${r.platform}`}
+                            {r.numberOfVas > 1 && `${r.numberOfVas} × `}
+                            {r.service}
+                            {r.platform && ` on ${r.platform}`}
                           </p>
                         </div>
                         {canSetGroup ? (
@@ -202,7 +215,7 @@ export function AccountsView({ accounts, canSetGroup }: { accounts: Account[]; c
                       </div>
                       <Rows
                         items={[
-                          ['Schedule', `${SCHEDULE_LABELS[r.scheduleType]}: ${schedule(r)}`],
+                          ['Schedule', `${SCHEDULE_LABELS[r.scheduleType]}: ${schedule(r, a.timeZone)}`],
                           [
                             'Night differential',
                             r.nightDifferential ? (
@@ -213,8 +226,9 @@ export function AccountsView({ accounts, canSetGroup }: { accounts: Account[]; c
                           ],
                           ['Additional hours', r.additionalHours ?? (r.additionalHoursPerDay != null ? `${hours(r.additionalHoursPerDay)} h a day` : null)],
                           ['Target start', r.targetStartDate.toLocaleDateString('en-PH', { ...manilaDate, timeZone: 'UTC' })],
-                          ['Tasks', <span key="t" className="whitespace-pre-wrap">{r.tasks}</span>],
+                          ['Tasks', r.tasks ? <span key="t" className="whitespace-pre-wrap">{r.tasks}</span> : null],
                           ['Tools', r.tools],
+                          ['Task tracker', r.taskTracker == null ? null : r.taskTracker ? 'Yes' : 'No'],
                           ['Group set by', r.requestGroupSetBy],
                         ]}
                       />

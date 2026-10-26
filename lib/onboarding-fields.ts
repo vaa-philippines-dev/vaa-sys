@@ -13,22 +13,49 @@ import { z } from 'zod'
 export const REGIONS = ['The Americas', 'Europe', 'Israel', 'Middle East', 'Asia-Pacific'] as const
 export type Region = (typeof REGIONS)[number]
 
-// The customer's own time zone, for context. Working hours are always
-// entered in Philippine time.
-export const TIME_ZONES = [
-  { value: 'America/New_York', label: 'US Eastern (New York)' },
-  { value: 'America/Chicago', label: 'US Central (Chicago)' },
-  { value: 'America/Denver', label: 'US Mountain (Denver)' },
-  { value: 'America/Los_Angeles', label: 'US Pacific (Los Angeles)' },
-  { value: 'Europe/London', label: 'UK (London)' },
-  { value: 'Europe/Berlin', label: 'Central Europe (Berlin, Paris)' },
-  { value: 'Asia/Jerusalem', label: 'Israel' },
-  { value: 'Asia/Dubai', label: 'Gulf (Dubai)' },
-  { value: 'Australia/Sydney', label: 'Australia (Sydney)' },
-  { value: 'Asia/Manila', label: 'Philippines' },
-  { value: 'Other', label: 'Other' },
-] as const
-export const TIME_ZONE_LABELS: Record<string, string> = Object.fromEntries(TIME_ZONES.map((t) => [t.value, t.label]))
+// The customer's time zone (required): every IANA zone the runtime knows,
+// labelled by its current UTC offset, e.g. "(UTC+08:00) Asia/Manila". Fixed
+// shift times are entered in this zone and converted to Philippine time.
+export const PHT_ZONE = 'Asia/Manila'
+const PHT_OFFSET_MINUTES = 8 * 60
+
+// Minutes east of UTC for a zone at a moment, e.g. 480 for Asia/Manila.
+export function zoneOffsetMinutes(timeZone: string, at: Date = new Date()): number {
+  const part = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longOffset' }).formatToParts(at).find((p) => p.type === 'timeZoneName')?.value ?? 'GMT'
+  const m = /GMT([+-])(\d{2}):?(\d{2})?/.exec(part)
+  if (!m) return 0
+  return (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3] ?? 0))
+}
+
+export function utcOffsetLabel(minutes: number) {
+  const abs = Math.abs(minutes)
+  return `UTC${minutes < 0 ? '-' : '+'}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`
+}
+
+export function isTimeZone(value: string) {
+  if (!value) return false
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function timeZoneLabel(timeZone: string, at: Date = new Date()) {
+  return isTimeZone(timeZone) ? `(${utcOffsetLabel(zoneOffsetMinutes(timeZone, at))}) ${timeZone.replace(/_/g, ' ')}` : timeZone
+}
+
+export type TimeZoneOption = { value: string; label: string }
+
+// Sorted west to east, then by name. Built on the server and passed to the
+// form, so the list the page renders matches the one it hydrates.
+export function timeZoneOptions(at: Date = new Date()): TimeZoneOption[] {
+  return Intl.supportedValuesOf('timeZone')
+    .map((value) => ({ value, offset: zoneOffsetMinutes(value, at) }))
+    .sort((a, b) => a.offset - b.offset || a.value.localeCompare(b.value))
+    .map(({ value, offset }) => ({ value, label: `(${utcOffsetLabel(offset)}) ${value.replace(/_/g, ' ')}` }))
+}
 
 export const PAYMENT_METHODS = ['PAYONEER', 'WISE', 'ACH_TRANSFER', 'SWIFT_TRANSFER', 'CREDIT_CARD', 'NIS_BANK_TRANSFER', 'OTHER'] as const
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number]
@@ -82,30 +109,45 @@ export const SERVICE_OFFERINGS = [
   'Shopify VA',
 ] as const
 
-// "Work Hour Type" (Google: Initial Project Hours | Daily | Weekly), with
-// daily split into fixed and flexible time, which the Google Form asks in a
-// free-text schedule. Daily fixed has set Philippine-time start and end
-// times; project is a total number of hours.
-export const SCHEDULE_TYPES = ['PROJECT', 'DAILY_FIXED', 'DAILY_FLEXIBLE', 'WEEKLY_FLEXIBLE'] as const
+// "Work Hour Type" (Google: Initial Project Hours | Daily | Weekly, plus
+// Monthly from the Oct 26 meeting), with daily split into fixed and flexible
+// time, which the Google Form asks in a free-text schedule. Daily fixed has
+// set start and end times; project is a total number of hours.
+export const SCHEDULE_TYPES = ['PROJECT', 'DAILY_FIXED', 'DAILY_FLEXIBLE', 'WEEKLY_FLEXIBLE', 'MONTHLY'] as const
 export type ScheduleType = (typeof SCHEDULE_TYPES)[number]
 export const SCHEDULE_LABELS: Record<ScheduleType, string> = {
   PROJECT: 'Initial project hours',
   DAILY_FIXED: 'Daily, fixed time',
   DAILY_FLEXIBLE: 'Daily, flexible time',
   WEEKLY_FLEXIBLE: 'Weekly',
+  MONTHLY: 'Monthly',
 }
 export const SCHEDULE_HINTS: Record<ScheduleType, string> = {
   PROJECT: 'A total number of hours for a project (e.g. 20 project hours).',
-  DAILY_FIXED: 'Set start and end times every work day, in Philippine time.',
+  DAILY_FIXED: 'Set start and end times every work day, in your time zone.',
   DAILY_FLEXIBLE: 'A set number of hours a day (e.g. 5 hours daily), worked any time that day.',
   WEEKLY_FLEXIBLE: 'A set number of hours a week (e.g. 40 hours weekly), worked any time.',
+  MONTHLY: 'A set number of hours a month (e.g. 80 hours monthly), worked any time.',
 }
 
-// The Google Form's limits: 3 to 9 hours a day, 15 to 45 hours a week.
-export const MIN_HOURS_PER_DAY = 3
-export const MAX_HOURS_PER_DAY = 9
-export const MIN_HOURS_PER_WEEK = 15
-export const MAX_HOURS_PER_WEEK = 45
+// Minimum hours per work hour type. Admins change them in Settings; there
+// is no maximum. Defaults from the Oct 26 meeting: 3 h a day, 15 h a week
+// (3 h x 5 days), 60 h a month (3 h x 21 days), 15 project hours.
+export const MINIMUM_KEYS = ['hoursPerDay', 'hoursPerWeek', 'hoursPerMonth', 'projectHours'] as const
+export type WorkHourMinimums = Record<(typeof MINIMUM_KEYS)[number], number>
+export const DEFAULT_MINIMUMS: WorkHourMinimums = { hoursPerDay: 3, hoursPerWeek: 15, hoursPerMonth: 60, projectHours: 15 }
+export const MINIMUM_LABELS: Record<keyof WorkHourMinimums, string> = {
+  hoursPerDay: 'Hours a day (daily fixed and daily flexible)',
+  hoursPerWeek: 'Hours a week (weekly, and daily hours times work days)',
+  hoursPerMonth: 'Hours a month (monthly)',
+  projectHours: 'Project hours (initial project hours)',
+}
+export const minimumsSchema = z.object(
+  Object.fromEntries(MINIMUM_KEYS.map((k) => [k, z.number('Enter a number.').min(0, 'Use 0 or more.').max(1000, 'Use 1,000 or less.')])) as Record<
+    keyof WorkHourMinimums,
+    z.ZodNumber
+  >
+)
 
 export const WORK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const
 
@@ -198,6 +240,8 @@ const toMinutes = (hhmm: string) => {
   return h * 60 + m
 }
 
+const TIME_RE = /^\d{2}:\d{2}$/
+
 // Length of a fixed shift in hours; an end before the start runs past midnight.
 export function shiftHours(start: string, end: string): number {
   const s = toMinutes(start)
@@ -221,22 +265,36 @@ export function nightDifferentialHours(start: string, end: string): number {
   return overlap / 60
 }
 
-// A fixed Philippine-time shift shown in the customer's own time zone, e.g.
-// ["3:00 PM", "8:00 PM"], so they can check it against their day. The end is
-// the start plus the shift length, so both use the same date's offset.
-export function phtShiftInZone(start: string, end: string, timeZone: string): [string, string] | null {
-  if (!timeZone || timeZone === 'Other' || timeZone === 'Asia/Manila') return null
-  const [h, m] = start.split(':').map(Number)
-  const now = new Date()
-  // Philippine time is UTC+8 all year.
-  const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h - 8, m))
-  const to = new Date(from.getTime() + shiftHours(start, end) * 3_600_000)
-  try {
-    const fmt = (d: Date) => d.toLocaleTimeString('en-US', { timeZone, hour: 'numeric', minute: '2-digit' })
-    return [fmt(from), fmt(to)]
-  } catch {
-    return null
-  }
+const wrap = (minutes: number) => ((minutes % 1440) + 1440) % 1440
+const toHhmm = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
+
+// The moment offsets are taken at: noon UTC on the target start date when
+// there is one (so daylight saving matches the start), else now.
+function offsetMoment(dateIso?: string) {
+  return dateIso && /^\d{4}-\d{2}-\d{2}$/.test(dateIso) ? new Date(`${dateIso}T12:00:00Z`) : new Date()
+}
+
+// A wall-clock HH:MM in the customer's zone as Philippine time, and back.
+export function zoneTimeToPht(hhmm: string, timeZone: string, dateIso?: string) {
+  if (!TIME_RE.test(hhmm) || !isTimeZone(timeZone)) return hhmm
+  return toHhmm(wrap(toMinutes(hhmm) - zoneOffsetMinutes(timeZone, offsetMoment(dateIso)) + PHT_OFFSET_MINUTES))
+}
+export function phtToZoneTime(hhmm: string, timeZone: string, dateIso?: string) {
+  if (!TIME_RE.test(hhmm) || !isTimeZone(timeZone)) return hhmm
+  return toHhmm(wrap(toMinutes(hhmm) - PHT_OFFSET_MINUTES + zoneOffsetMinutes(timeZone, offsetMoment(dateIso))))
+}
+
+// "America/New York, UTC-05:00": a zone with its offset on a date, for
+// labelling times entered for that date.
+export function zoneOnDate(timeZone: string, dateIso?: string) {
+  return isTimeZone(timeZone) ? `${timeZone.replace(/_/g, ' ')}, ${utcOffsetLabel(zoneOffsetMinutes(timeZone, offsetMoment(dateIso)))}` : timeZone
+}
+
+// "17:00" -> "5:00 PM".
+export function time12(hhmm: string) {
+  if (!TIME_RE.test(hhmm)) return hhmm
+  const [h, m] = hhmm.split(':').map(Number)
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
 }
 
 // ── Validation ───────────────────────────────────────────────────
@@ -245,7 +303,6 @@ const text = (max: number) => z.string().trim().max(max)
 const required = (label: string, max = 200) => text(max).min(1, `Enter ${label}.`)
 const isEmail = (v: string) => z.email().safeParse(v).success
 const PHONE_RE = /^\+?[0-9 ()-]{7,}$/
-const TIME_RE = /^\d{2}:\d{2}$/
 
 export const part1Schema = z
   .object({
@@ -263,7 +320,7 @@ export const part1Schema = z
       dbaName: text(200),
       businessAddress: required('the company business address', 500),
       website: text(300),
-      timeZone: text(60),
+      timeZone: text(60).refine(isTimeZone, 'Choose your time zone.'),
     }),
     hasSecondary: z.boolean(),
     secondary: z.object({
@@ -274,7 +331,7 @@ export const part1Schema = z
       whatsapp: text(40),
     }),
     business: z.object({
-      platforms: z.array(z.enum(PLATFORMS)).min(1, 'Choose at least one platform the VA will work on.'),
+      platforms: z.array(z.enum(PLATFORMS)),
       platformOther: text(200),
       otherInfo: text(2000),
     }),
@@ -322,56 +379,73 @@ export const part1Schema = z
   })
 
 const optionalNumber = z.number().nullable()
-const inRange = (v: number | null, min: number, max: number) => v != null && !Number.isNaN(v) && v >= min && v <= max
+const hoursOk = (v: number | null, ceiling: number) => v != null && !Number.isNaN(v) && v > 0 && v <= ceiling
 
-export const vaRequestSchema = z
-  .object({
-    service: z.enum(SERVICE_OFFERINGS, 'Choose a service offering.'),
-    numberOfVas: z.number('Enter how many VAs.').int('Use a whole number of VAs.').min(1, 'At least 1 VA.').max(50),
-    targetStartDate: text(10).refine((v) => /^\d{4}-\d{2}-\d{2}$/.test(v), 'Choose a target start date.'),
-    scheduleType: z.enum(SCHEDULE_TYPES, 'Choose a work hour type.'),
-    hoursPerWeek: optionalNumber,
-    hoursPerDay: optionalNumber,
-    projectHours: optionalNumber,
-    startTimePht: text(5),
-    endTimePht: text(5),
-    workDays: z.array(z.enum(WORK_DAYS)).max(7),
-    additionalHours: text(200),
-    tasks: required('the tasks/requests for your VA', 2000),
-    tools: text(1000),
-  })
-  .superRefine((r, ctx) => {
-    const issue = (path: string, message: string) => ctx.addIssue({ code: 'custom', path: [path], message })
-    const daily = r.scheduleType === 'DAILY_FIXED' || r.scheduleType === 'DAILY_FLEXIBLE'
-    if (daily && r.workDays.length === 0) issue('workDays', 'Choose the work days.')
-    let perDay: number | null = null
-    if (r.scheduleType === 'DAILY_FLEXIBLE') {
-      if (!inRange(r.hoursPerDay, MIN_HOURS_PER_DAY, MAX_HOURS_PER_DAY)) issue('hoursPerDay', `Enter hours per day, between ${MIN_HOURS_PER_DAY} and ${MAX_HOURS_PER_DAY}.`)
-      else perDay = r.hoursPerDay
-    }
-    if (r.scheduleType === 'DAILY_FIXED') {
-      if (!TIME_RE.test(r.startTimePht) || !TIME_RE.test(r.endTimePht)) issue('startTimePht', 'Enter the start and end time in Philippine time.')
-      else {
-        const h = shiftHours(r.startTimePht, r.endTimePht)
-        if (h < MIN_HOURS_PER_DAY || h > MAX_HOURS_PER_DAY) issue('endTimePht', `A fixed shift must be ${MIN_HOURS_PER_DAY} to ${MAX_HOURS_PER_DAY} hours a day.`)
-        else perDay = h
-      }
-    }
-    if (perDay != null && r.workDays.length > 0) {
-      const week = perDay * r.workDays.length
-      if (week < MIN_HOURS_PER_WEEK || week > MAX_HOURS_PER_WEEK) {
-        issue('workDays', `That’s ${week} hours a week. The schedule must be ${MIN_HOURS_PER_WEEK} to ${MAX_HOURS_PER_WEEK} hours a week (e.g. 3 to 9 hours a day, 5 days a week).`)
-      }
-    }
-    if (r.scheduleType === 'WEEKLY_FLEXIBLE' && !inRange(r.hoursPerWeek, MIN_HOURS_PER_WEEK, MAX_HOURS_PER_WEEK)) {
-      issue('hoursPerWeek', `Enter hours per week, between ${MIN_HOURS_PER_WEEK} and ${MAX_HOURS_PER_WEEK}.`)
-    }
-    if (r.scheduleType === 'PROJECT' && !inRange(r.projectHours, 1, 2000)) issue('projectHours', 'Enter the number of project hours.')
-  })
+export type MinimumField = 'hoursPerDay' | 'hoursPerWeek' | 'hoursPerMonth' | 'projectHours' | 'endTimePht' | 'workDays'
 
-export const part2Schema = z.object({
-  requests: z.array(vaRequestSchema).min(1, 'Add at least one VA service.').max(20),
-})
+// Below-minimum problems for one VA service, by field: the form outlines
+// those fields in red as the customer types, and the schema rejects them.
+// Hours are only capped by what fits in a day, week or month.
+export function minimumIssues(
+  r: Pick<VaRequest, 'scheduleType' | 'hoursPerDay' | 'hoursPerWeek' | 'hoursPerMonth' | 'projectHours' | 'startTimePht' | 'endTimePht' | 'workDays'> | VaRequestDraft,
+  min: WorkHourMinimums
+): Partial<Record<MinimumField, string>> {
+  const issues: Partial<Record<MinimumField, string>> = {}
+  let perDay: number | null = null
+  if (r.scheduleType === 'DAILY_FLEXIBLE' && r.hoursPerDay != null && !Number.isNaN(r.hoursPerDay)) {
+    if (r.hoursPerDay < min.hoursPerDay) issues.hoursPerDay = `The minimum is ${min.hoursPerDay} hours a day.`
+    else perDay = r.hoursPerDay
+  }
+  if (r.scheduleType === 'DAILY_FIXED' && TIME_RE.test(r.startTimePht) && TIME_RE.test(r.endTimePht)) {
+    const h = shiftHours(r.startTimePht, r.endTimePht)
+    if (h < min.hoursPerDay) issues.endTimePht = `That’s ${h} hour${h === 1 ? '' : 's'}. The minimum is ${min.hoursPerDay} hours a day.`
+    else perDay = h
+  }
+  if (perDay != null && r.workDays.length > 0 && perDay * r.workDays.length < min.hoursPerWeek) {
+    issues.workDays = `That’s ${perDay * r.workDays.length} hours a week. The minimum is ${min.hoursPerWeek} hours a week.`
+  }
+  if (r.scheduleType === 'WEEKLY_FLEXIBLE' && r.hoursPerWeek != null && r.hoursPerWeek < min.hoursPerWeek) issues.hoursPerWeek = `The minimum is ${min.hoursPerWeek} hours a week.`
+  if (r.scheduleType === 'MONTHLY' && r.hoursPerMonth != null && r.hoursPerMonth < min.hoursPerMonth) issues.hoursPerMonth = `The minimum is ${min.hoursPerMonth} hours a month.`
+  if (r.scheduleType === 'PROJECT' && r.projectHours != null && r.projectHours < min.projectHours) issues.projectHours = `The minimum is ${min.projectHours} project hours.`
+  return issues
+}
+
+export function vaRequestSchemaFor(min: WorkHourMinimums) {
+  return z
+    .object({
+      service: z.enum(SERVICE_OFFERINGS, 'Choose a service offering.'),
+      numberOfVas: z.number('Enter how many VAs.').int('Use a whole number of VAs.').min(1, 'At least 1 VA.').max(50),
+      targetStartDate: text(10).refine((v) => /^\d{4}-\d{2}-\d{2}$/.test(v), 'Choose a target start date.'),
+      scheduleType: z.enum(SCHEDULE_TYPES, 'Choose a work hour type.'),
+      hoursPerWeek: optionalNumber,
+      hoursPerDay: optionalNumber,
+      hoursPerMonth: optionalNumber,
+      projectHours: optionalNumber,
+      // Philippine time; the customer enters them in their own zone.
+      startTimePht: text(5),
+      endTimePht: text(5),
+      workDays: z.array(z.enum(WORK_DAYS)).max(7),
+      additionalHours: text(200),
+      taskTracker: z.boolean().nullable(),
+      tasks: text(2000),
+      tools: text(1000),
+    })
+    .superRefine((r, ctx) => {
+      const issue = (path: string, message: string) => ctx.addIssue({ code: 'custom', path: [path], message })
+      const daily = r.scheduleType === 'DAILY_FIXED' || r.scheduleType === 'DAILY_FLEXIBLE'
+      if (daily && r.workDays.length === 0) issue('workDays', 'Choose the work days.')
+      if (r.scheduleType === 'DAILY_FLEXIBLE' && !hoursOk(r.hoursPerDay, 24)) issue('hoursPerDay', 'Enter the work hours per day.')
+      if (r.scheduleType === 'DAILY_FIXED' && (!TIME_RE.test(r.startTimePht) || !TIME_RE.test(r.endTimePht))) issue('startTimePht', 'Enter the start and end time.')
+      if (r.scheduleType === 'WEEKLY_FLEXIBLE' && !hoursOk(r.hoursPerWeek, 168)) issue('hoursPerWeek', 'Enter the work hours per week.')
+      if (r.scheduleType === 'MONTHLY' && !hoursOk(r.hoursPerMonth, 744)) issue('hoursPerMonth', 'Enter the work hours per month.')
+      if (r.scheduleType === 'PROJECT' && !hoursOk(r.projectHours, 10000)) issue('projectHours', 'Enter the number of project hours.')
+      for (const [path, message] of Object.entries(minimumIssues(r, min))) issue(path, message)
+    })
+}
+
+export function part2SchemaFor(min: WorkHourMinimums) {
+  return z.object({ requests: z.array(vaRequestSchemaFor(min)).min(1, 'Add at least one VA service.').max(20) })
+}
 
 // Part 3 ratings keyed by scenario id: one rating per statement, in order.
 export const part3AnswersSchema = z
@@ -389,12 +463,14 @@ export const part3Schema = z.discriminatedUnion('completeNow', [
   z.object({ completeNow: z.literal(false) }),
 ])
 
-export const onboardingSchema = z.object({ part1: part1Schema, part2: part2Schema, part3: part3Schema })
+export function onboardingSchemaFor(min: WorkHourMinimums) {
+  return z.object({ part1: part1Schema, part2: part2SchemaFor(min), part3: part3Schema })
+}
 
 export type Part1 = z.infer<typeof part1Schema>
-export type VaRequest = z.infer<typeof vaRequestSchema>
+export type VaRequest = z.infer<ReturnType<typeof vaRequestSchemaFor>>
 export type Part3Answers = z.infer<typeof part3AnswersSchema>
-export type OnboardingInput = z.infer<typeof onboardingSchema>
+export type OnboardingInput = z.infer<ReturnType<typeof onboardingSchemaFor>>
 
 // Form state allows blanks the schema rejects, so the selects can start empty.
 export type Part1Draft = Omit<Part1, 'primary' | 'payment'> & {
@@ -424,11 +500,14 @@ export function emptyVaRequest(): VaRequestDraft {
     scheduleType: '',
     hoursPerWeek: null,
     hoursPerDay: null,
+    hoursPerMonth: null,
     projectHours: null,
-    startTimePht: '',
-    endTimePht: '',
+    // 8:00 AM to 5:00 PM Philippine time, as agreed on Oct 26.
+    startTimePht: '08:00',
+    endTimePht: '17:00',
     workDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
     additionalHours: '',
+    taskTracker: null,
     tasks: '',
     tools: '',
   }

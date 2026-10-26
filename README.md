@@ -9,13 +9,15 @@ One app with two areas on one database. It replaces the legacy Apps Script CMS s
     - primary and secondary contacts with roles, and whether the primary contact is the focal person
     - company, DBA name, business address, website
     - region of residence (The Americas, Europe, Israel, Middle East, Asia-Pacific)
-    - the platforms the VAs will work on, and any other information (where Google's hint asks about FBA/FBM and private label or reseller)
+    - time zone (required): every zone the runtime knows (`Intl`), labelled by UTC offset, e.g. "(UTC+08:00) Asia/Manila"
+    - optionally, the platforms the VAs will work on and any other information (where Google's hint asks about FBA/FBM and private label or reseller)
     - the invoice contact
     - payment details. Customers in Israel choose from Payoneer, Wise, NIS bank transfer or Other. Everyone else is asked whether they have an active Payoneer or Wise account and chooses from Payoneer, Wise, ACH, SWIFT, credit card or Other.
   - **Part 2, skill requirements:** one VA service per service type, each with:
     - service offering (the Google Form's list), quantity and target start date
-    - work hour type: initial project hours, daily fixed (Philippine time), daily flexible, or weekly, at 3 to 9 hours a day and 15 to 45 hours a week. A daily-fixed shift between 10 PM and 6 AM is flagged for night differential.
-    - additional hours, tasks and tools
+    - work hour type: initial project hours, daily fixed, daily flexible, weekly or monthly. Only minimums apply (defaults 3 h a day, 15 h a week, 60 h a month, 15 project hours; admins change them under Lead Management → Settings). A field below its minimum is outlined in red.
+    - daily fixed times are entered in the customer's time zone (default 8:00 AM – 5:00 PM Philippine time) and stored in Philippine time; a shift between 10 PM and 6 AM Philippine time is flagged for night differential
+    - additional hours, whether the VA will use a task tracker, and the (optional) tasks and tools
   - **Part 3, VA personality preference:** optional. Ten scenarios, each with four statements rated 1 (least preferred) to 5 (most preferred). The statements follow the DISC styles in the same order every time, so the lead's page shows a total per style. A customer who skips it can complete it later on the same link, even after the link's 14 days, and the lead's page shows it as not filled in yet with the link to copy.
 
 Same stack as `va-management`: Next.js 16, React 19, Tailwind v4, shadcn, Prisma 7 with `@prisma/adapter-pg`, and Supabase Auth with Google.
@@ -54,7 +56,7 @@ Everyone signs in with Google and needs an active VAA Workforce account (`public
 2. **Create onboarding link:** this makes a personal link, valid for 14 days. The page shows a ready-to-send email with Copy and "Open in email app" buttons. Making a new link stops the old one from working.
 3. **The customer fills in the form.** Submitting it creates, in one go:
    - the customer's first **account** (`CLT_…`, named after the customer) with its contacts, invoice contact and payment method, from Part 1
-   - a **main ticket** (`TKT-000001`) with one **sub-ticket** per VA service (`TKT-000001-01`), from Part 2
+   - a **main ticket** (`TKT-000001`) with one **sub-ticket** per VA (`TKT-000001-01`), from Part 2: a service asking for 2 VAs makes two sub-tickets
    - the Part 3 answers on the submission, if the customer filled them in
 
    Lead Management follows each lead: No link yet → Link sent → Form opened → Form submitted. On the lead's page, Lead Management sets each sub-ticket's **request group** (Regular by default, or Expert or Casual).
@@ -76,7 +78,8 @@ The app shares va-management's Supabase Postgres but only owns the **`vaa_sys`**
 | `accounts` | account ID, name, company, DBA name, business address, website, time zone, platforms, other information, invoice contact, payment details. `fulfillment_type` and `seller_type` are unused. |
 | `account_contacts` | primary and secondary contact (name, role, email, WhatsApp, region, focal) |
 | `tickets` | main ticket per account request (`ticket_number` → TKT-000001) |
-| `ticket_requests` | one sub-ticket per VA service: service, schedule and hours, night differential, additional hours, start date, tasks, tools, request group. `platform` is only set on requests made before the platforms moved to the account. |
+| `app_settings` | general settings admins edit, one row per key (e.g. the work hour minimums); no row means the built-in defaults |
+| `ticket_requests` | one sub-ticket per VA: service, schedule and hours, night differential, additional hours, task tracker, start date, tasks, tools, request group. `platform` is only set on requests made before the platforms moved to the account. |
 
 The app reads va-management's data with raw SQL and never modifies it:
 - `public.users` for sign-in
@@ -97,6 +100,7 @@ npm run db:apply -- prisma/sql/<file>.sql
 - `002_vaa_sys_init.sql`: dropped the prototype and created `vaa_sys`
 - `003_accounts_tickets.sql`: added accounts, contacts and tickets
 - `004_onboarding_google_form.sql`: added the Google Form's questions and Part 3 (additive only)
+- `005_settings_monthly_tracker.sql`: added the monthly work hour type, the task tracker answer and `app_settings` (additive only)
 
 ## Setup
 

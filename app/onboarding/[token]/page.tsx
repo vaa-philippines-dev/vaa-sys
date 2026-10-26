@@ -2,6 +2,8 @@ import Image from 'next/image'
 import type { Metadata } from 'next'
 import { prisma } from '@/lib/prisma'
 import { findLink } from '@/lib/onboarding'
+import { timeZoneOptions } from '@/lib/onboarding-fields'
+import { getWorkHourMinimums } from '@/lib/settings'
 import { OnboardingForm } from '@/components/onboarding/OnboardingForm'
 
 export const metadata: Metadata = {
@@ -17,6 +19,8 @@ export default async function OnboardingPage({ params }: { params: Promise<{ tok
   if (link && state === 'OPEN' && !link.openedAt) {
     await prisma.onboardingLink.updateMany({ where: { id: link.id, openedAt: null }, data: { openedAt: new Date() } })
   }
+
+  const minimums = state === 'OPEN' ? await getWorkHourMinimums() : null
 
   return (
     <div className="min-h-screen bg-background">
@@ -35,6 +39,8 @@ export default async function OnboardingPage({ params }: { params: Promise<{ tok
             customerCode={link.customer.customerCode}
             prefillEmail={link.customer.email}
             part3Only={state === 'PART3_OPEN'}
+            timeZones={state === 'OPEN' ? timeZoneOptions() : []}
+            minimums={minimums}
           />
         ) : (
           <div className="mx-auto max-w-md rounded-xl border bg-card p-8 text-center">

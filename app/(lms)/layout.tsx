@@ -39,7 +39,7 @@ export default async function LmsLayout({ children }: { children: React.ReactNod
             <SystemSwitcher current="Lead Management System" others={others} />
           </div>
           <Suspense>
-            <LmsNav total={leads.length} byStage={byStage} />
+            <LmsNav total={leads.length} byStage={byStage} showSettings={canUse(user.role, 'settings')} />
           </Suspense>
         </div>
 
