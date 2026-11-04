@@ -17,6 +17,7 @@ export async function syncLeadPhase(tx: Tx, actor: ActivityActor, customerId: st
       name: true,
       leadPhase: true,
       requestType: true,
+      intakeCompletedAt: true,
       contractSentAt: true,
       contractConfirmedAt: true,
       handoffCompletedAt: true,
@@ -24,7 +25,8 @@ export async function syncLeadPhase(tx: Tx, actor: ActivityActor, customerId: st
     },
   })
   const phase = leadPhaseFor({
-    formSubmitted: c._count.submissions > 0,
+    // An imported lead can be past Customer Intake without the form.
+    formSubmitted: c._count.submissions > 0 || !!c.intakeCompletedAt,
     requestType: c.requestType,
     contractSent: !!c.contractSentAt,
     contractConfirmed: !!c.contractConfirmedAt,

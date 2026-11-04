@@ -21,7 +21,8 @@ function refreshLead(customerId: string) {
 }
 
 // The lead's workflow facts, and the account its contract is picked for:
-// the one made from the onboarding form.
+// the one made from the onboarding form. An imported lead has no account,
+// so its contract is kept on the customer (customers.contract_id).
 async function leadForWorkflow(customerId: string) {
   return prisma.customer.findUnique({
     where: { id: customerId },
@@ -29,6 +30,8 @@ async function leadForWorkflow(customerId: string) {
       name: true,
       leadPhase: true,
       requestType: true,
+      intakeCompletedAt: true,
+      contractId: true,
       contractSentAt: true,
       contractConfirmedAt: true,
       handoffCompletedAt: true,
@@ -142,19 +145,24 @@ export async function setLeadContract(customerId: string, contractId: string): P
   const lead = await leadForWorkflow(customerId)
   if (!lead) return { ok: false, error: 'That lead no longer exists.' }
   const account = lead.submissions[0]?.account
-  if (!account) return { ok: false, error: 'The contract is picked once the customer has submitted the onboarding form.' }
+  if (!account && !lead.intakeCompletedAt) return { ok: false, error: 'The contract is picked once the customer has submitted the onboarding form.' }
   if (lead.contractConfirmedAt) return { ok: false, error: 'The contract is already confirmed. Change it on the account’s page in Customer Management.' }
   const contract = contractId ? await prisma.contract.findUnique({ where: { id: contractId }, select: { id: true, isActive: true } }) : null
   if (contractId && (!contract || !contract.isActive)) return { ok: false, error: 'Pick a contract from the list.' }
-  if ((account.contractId ?? '') === contractId) return { ok: true, data: null }
+  const currentId = account ? account.contractId : lead.contractId
+  if ((currentId ?? '') === contractId) return { ok: true, data: null }
 
   await prisma.$transaction(async (tx) => {
-    await tx.account.update({ where: { id: account.id }, data: { contractId: contractId || null } })
-    const base = { entityType: 'Account', entityId: account.id, entityLabel: `${account.name} (${account.accountCode})`, customerId }
+    const next = { contractId: contractId || null }
+    if (account) await tx.account.update({ where: { id: account.id }, data: next })
+    else await tx.customer.update({ where: { id: customerId }, data: next })
+    const base = account
+      ? { entityType: 'Account', entityId: account.id, entityLabel: `${account.name} (${account.accountCode})`, customerId }
+      : { entityType: 'Customer', entityId: customerId, entityLabel: lead.name, customerId }
     await logActivity(
       tx,
       actor,
-      fieldChanges(base, { contractId: account.contractId }, { contractId: contractId || null }).map((c) => ({ ...c, action: 'CONTRACT_ASSIGNED' }))
+      fieldChanges(base, { contractId: currentId }, next).map((c) => ({ ...c, action: 'CONTRACT_ASSIGNED' }))
     )
   })
   refreshLead(customerId)
@@ -169,14 +177,15 @@ export async function markContractSent(customerId: string): Promise<ActionResult
   const lead = await leadForWorkflow(customerId)
   if (!lead) return { ok: false, error: 'That lead no longer exists.' }
   const account = lead.submissions[0]?.account
-  if (!account) return { ok: false, error: 'The contract is sent once the customer has submitted the onboarding form.' }
-  if (!account.contractId) return { ok: false, error: 'Pick the contract first.' }
+  if (!account && !lead.intakeCompletedAt) return { ok: false, error: 'The contract is sent once the customer has submitted the onboarding form.' }
+  const contractId = account ? account.contractId : lead.contractId
+  if (!contractId) return { ok: false, error: 'Pick the contract first.' }
   if (lead.contractConfirmedAt) return { ok: false, error: 'The contract is already confirmed.' }
 
   const now = new Date()
   const phase = await prisma.$transaction(async (tx) => {
-    const contract = await tx.contract.findUniqueOrThrow({ where: { id: account.contractId! }, select: { contractCode: true, name: true } })
-    await tx.customer.update({ where: { id: customerId }, data: { contractSentAt: now, contractSentByEmail: actor.email.toLowerCase(), contractSentId: account.contractId } })
+    const contract = await tx.contract.findUniqueOrThrow({ where: { id: contractId }, select: { contractCode: true, name: true } })
+    await tx.customer.update({ where: { id: customerId }, data: { contractSentAt: now, contractSentByEmail: actor.email.toLowerCase(), contractSentId: contractId } })
     await logActivity(tx, actor, {
       entityType: 'Customer',
       entityId: customerId,
