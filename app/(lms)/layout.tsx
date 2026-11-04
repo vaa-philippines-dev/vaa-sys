@@ -49,11 +49,12 @@ export default async function LmsLayout({ children }: { children: React.ReactNod
           </div>
           <Suspense>
             <LmsNav
-              total={leads.length}
+              total={leads.filter((l) => !l.isTest).length}
               board={board}
               showContracts={can(user.role, 'contracts')}
               showReports={reports}
               showSettings={can(user.role, 'settings', 'update')}
+              showAccess={can(user.role, 'userAccess')}
             />
           </Suspense>
         </div>

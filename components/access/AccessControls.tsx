@@ -12,10 +12,19 @@ import { addAccessUser, changeAccessRole, setAccessActive } from '@/app/(cms)/ac
 import { DEPARTMENT_ROLES, ROLE_LABELS, type AccessRole } from '@/lib/access-fields'
 
 type Department = { id: string; name: string }
+// Workforce staff with a company mailbox, and the role they have now (if any).
+type Person = { email: string; name: string; current: string | null }
 
-export function AddAccessForm({ roles, departments }: { roles: AccessRole[]; departments: Department[] }) {
+const OTHER = '__other__'
+
+// Pick the person by name from VAA Workforce's staff list; "Someone else"
+// takes a typed email for anyone not on it (the server still checks that
+// they have an active Workforce account).
+export function AddAccessForm({ roles, departments, people }: { roles: AccessRole[]; departments: Department[]; people: Person[] }) {
   const router = useRouter()
-  const [email, setEmail] = useState('')
+  const [picked, setPicked] = useState(people.length ? '' : OTHER)
+  const [typed, setTyped] = useState('')
+  const email = picked === OTHER ? typed : picked
   const [role, setRole] = useState<AccessRole>(roles.includes('CUSTOMER_SPECIALIST') ? 'CUSTOMER_SPECIALIST' : roles[0])
   const [departmentId, setDepartmentId] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -24,11 +33,13 @@ export function AddAccessForm({ roles, departments }: { roles: AccessRole[]; dep
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
+    if (!email) return setError('Pick a person, or choose “Someone else” and enter their work email.')
     start(async () => {
       const result = await addAccessUser({ email, role, departmentId: needsDepartment ? departmentId : '' })
       if (!result.ok) return setError(result.error)
       setError(null)
-      setEmail('')
+      setPicked(people.length ? '' : OTHER)
+      setTyped('')
       toast.success(`${result.data.name} can now use VAA Systems as ${ROLE_LABELS[role]}.`)
       router.refresh()
     })
@@ -36,10 +47,27 @@ export function AddAccessForm({ roles, departments }: { roles: AccessRole[]; dep
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-3 rounded-xl border bg-card p-4 sm:flex-row sm:flex-wrap sm:items-end">
-      <div className="flex-1 space-y-1.5 sm:min-w-56">
-        <Label htmlFor="access-email">Work email</Label>
-        <Input id="access-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@vaaphilippines.com" required disabled={pending} />
-      </div>
+      {people.length > 0 && (
+        <div className="flex-1 space-y-1.5 sm:min-w-64">
+          <Label htmlFor="access-person">Person</Label>
+          <NativeSelect id="access-person" value={picked} onChange={(e) => setPicked(e.target.value)} disabled={pending}>
+            <option value="">Pick a name…</option>
+            {people.map((p) => (
+              <option key={p.email} value={p.email}>
+                {p.name} · {p.email}
+                {p.current ? ` (now ${p.current})` : ''}
+              </option>
+            ))}
+            <option value={OTHER}>Someone else (type their email)</option>
+          </NativeSelect>
+        </div>
+      )}
+      {picked === OTHER && (
+        <div className="flex-1 space-y-1.5 sm:min-w-56">
+          <Label htmlFor="access-email">Work email</Label>
+          <Input id="access-email" type="email" value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="name@vaaphilippines.com" required disabled={pending} />
+        </div>
+      )}
       <div className="space-y-1.5 sm:w-60">
         <Label htmlFor="access-role">Role</Label>
         <NativeSelect id="access-role" value={role} onChange={(e) => setRole(e.target.value as AccessRole)} disabled={pending || roles.length === 1}>

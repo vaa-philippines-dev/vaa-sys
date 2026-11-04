@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { REAL_CUSTOMERS } from '@/lib/customers'
 import { staffNames } from '@/lib/workforce'
 import { dateOnly, dayString, manilaStartOf, manilaToday } from '@/lib/customer-fields'
 import { REQUEST_GROUPS, REQUEST_GROUP_LABELS, SCHEDULE_LABELS, SCHEDULE_TYPES } from '@/lib/onboarding-fields'
@@ -172,8 +173,9 @@ export async function leadReport(range: ReportRange, now = new Date()): Promise<
   const expiredBefore = end < now ? end : now
 
   const [leads, links, requests] = await Promise.all([
+    // Test leads (lib/test-leads.ts) never count, here or in the two below.
     prisma.customer.findMany({
-      where: { createdAt: { gte: start, lt: end } },
+      where: { ...REAL_CUSTOMERS, createdAt: { gte: start, lt: end } },
       select: {
         createdAt: true,
         createdByEmail: true,
@@ -183,6 +185,7 @@ export async function leadReport(range: ReportRange, now = new Date()): Promise<
     }),
     prisma.onboardingLink.findMany({
       where: {
+        customer: REAL_CUSTOMERS,
         OR: [
           { createdAt: { gte: start, lt: end } },
           { submittedAt: { gte: start, lt: end } },
@@ -192,7 +195,7 @@ export async function leadReport(range: ReportRange, now = new Date()): Promise<
       select: { createdAt: true, submittedAt: true, expiresAt: true, revokedAt: true },
     }),
     prisma.ticketRequest.findMany({
-      where: { ticket: { submission: { is: { submittedAt: { gte: start, lt: end } } } } },
+      where: { ticket: { customer: REAL_CUSTOMERS, submission: { is: { submittedAt: { gte: start, lt: end } } } } },
       select: {
         service: true,
         numberOfVas: true,

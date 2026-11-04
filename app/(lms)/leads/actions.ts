@@ -11,6 +11,8 @@ import { linkExpiry, newLinkToken } from '@/lib/onboarding'
 import { dateOnly, manilaToday, newLeadSchema, type ActionResult, type CustomerMatch, type NewLeadInput } from '@/lib/customer-fields'
 import { confirmContractSchema, PHASE_LABELS, REQUEST_TYPES, REQUEST_TYPE_LABELS, type ConfirmContractInput, type LeadPhase, type LeadRequestType } from '@/lib/lead-phase-fields'
 import { REQUEST_GROUPS, type RequestGroup } from '@/lib/onboarding-fields'
+import { addTestLead, deleteTestLead, sampleOnboarding } from '@/lib/test-leads'
+import { submitOnboarding } from '@/app/onboarding/[token]/actions'
 
 const NO_ACCESS = "You don't have permission to use Lead Management."
 
@@ -73,6 +75,33 @@ export async function createLead(input: NewLeadInput): Promise<ActionResult> {
   revalidatePath('/leads')
   revalidatePath('/customers')
   redirect(`/leads/${customer.id}`)
+}
+
+// Admins: a test lead with a sample onboarding form (lib/test-leads.ts),
+// submitted through the public form's own action so it is saved exactly as a
+// customer's would be. Like createLead, it redirects from the server.
+export async function createTestLead(): Promise<ActionResult> {
+  const actor = await getActorFor('testLeads', 'create')
+  if (!actor) return { ok: false, error: 'Only admins can add test leads.' }
+
+  const { id, n, token } = await addTestLead(actor)
+  const submitted = await submitOnboarding(token, sampleOnboarding(n))
+  revalidatePath('/leads')
+  revalidatePath('/customers')
+  if (!submitted.ok) return { ok: false, error: `Test Lead ${n} was added, but its sample form couldn’t be saved: ${submitted.error}` }
+  redirect(`/leads/${id}`)
+}
+
+// Admins: deletes a test lead and everything attached to it. Real leads are
+// refused in lib/test-leads.ts.
+export async function removeTestLead(customerId: string): Promise<ActionResult> {
+  const actor = await getActorFor('testLeads', 'delete')
+  if (!actor) return { ok: false, error: 'Only admins can delete test leads.' }
+  const result = await deleteTestLead(actor, customerId)
+  if (!result.ok) return result
+  revalidatePath('/leads')
+  revalidatePath('/customers')
+  redirect('/leads')
 }
 
 // Makes the prefilled onboarding link. Any older open link for the same

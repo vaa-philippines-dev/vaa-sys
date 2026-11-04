@@ -11,6 +11,13 @@ import type { ActionResult } from '@/lib/customer-fields'
 
 const NO_ACCESS = "You don't have permission to change access."
 
+// The same list is on Customer Management's /access and Lead Management's
+// /leads/access (components/access/AccessPanel.tsx).
+function refreshAccess() {
+  revalidatePath('/access')
+  revalidatePath('/leads/access')
+}
+
 const addSchema = z.object({
   email: z.email('Enter a valid email.').trim().toLowerCase(),
   role: z.enum(ACCESS_ROLES),
@@ -66,7 +73,7 @@ export async function addAccessUser(input: { email: string; role: string; depart
       newValue: role,
     })
   })
-  revalidatePath('/access')
+  refreshAccess()
   return { ok: true, data: { name: [staff.firstName, staff.lastName].filter(Boolean).join(' ') || email } }
 }
 
@@ -87,7 +94,7 @@ export async function setAccessActive(id: string, isActive: boolean): Promise<Ac
     await tx.accessUser.update({ where: { id }, data: { isActive } })
     await logActivity(tx, actor, { entityType: 'Access', entityId: id, entityLabel: row.email, action: 'UPDATE', field: 'isActive', oldValue: row.isActive, newValue: isActive })
   })
-  revalidatePath('/access')
+  refreshAccess()
   return { ok: true, data: null }
 }
 
@@ -113,6 +120,6 @@ export async function changeAccessRole(id: string, role: AccessRole, departmentI
         : []),
     ])
   })
-  revalidatePath('/access')
+  refreshAccess()
   return { ok: true, data: null }
 }

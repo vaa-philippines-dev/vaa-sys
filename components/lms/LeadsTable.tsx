@@ -1,11 +1,14 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useTransition } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Download, Plus, Search, Upload, X } from 'lucide-react'
+import { toast } from 'sonner'
+import { Download, FlaskConical, Loader2, Plus, Search, Upload, X } from 'lucide-react'
+import { createTestLead } from '@/app/(lms)/leads/actions'
 import { NewLeadForm } from '@/components/leads/NewLeadForm'
+import { TestBadge } from '@/components/leads/TestBadge'
 import { COLUMN_META, type BoardColumn } from '@/components/lms/stage-meta'
 import { PHASE_LABELS } from '@/lib/lead-phase-fields'
 import { cn } from '@/lib/utils'
@@ -20,16 +23,38 @@ export type TableLead = {
   day: number
   addedOn: string
   addedBy: string
+  test: boolean
 }
 
 // The Leads list as a table: one row per lead, newest first, with its phase
 // (Customer Intake's step, or the phase after the form), request type and
 // age. `stage` in the URL (the sidebar's views) filters it to one column of
-// the old board. Admins also get the import template and upload.
-export function LeadsTable({ leads, column: stage, openNew, canImport }: { leads: TableLead[]; column: BoardColumn | null; openNew: boolean; canImport: boolean }) {
+// the old board. Admins also get the import template and upload, and can
+// add a test lead (listed with a Test badge, never counted).
+export function LeadsTable({
+  leads,
+  column: stage,
+  openNew,
+  canImport,
+  canTest,
+}: {
+  leads: TableLead[]
+  column: BoardColumn | null
+  openNew: boolean
+  canImport: boolean
+  canTest: boolean
+}) {
   const router = useRouter()
   const [query, setQuery] = useState('')
   const [drawerOpen, setDrawerOpen] = useState(openNew)
+  const [addingTest, startTest] = useTransition()
+
+  // On success the action redirects to the new test lead's page.
+  const addTestLead = () =>
+    startTest(async () => {
+      const result = await createTestLead()
+      if (result && !result.ok) toast.error(result.error)
+    })
 
   const closeDrawer = () => {
     setDrawerOpen(false)
@@ -48,7 +73,9 @@ export function LeadsTable({ leads, column: stage, openNew, canImport }: { leads
     return q ? leads.filter((l) => `${l.name} ${l.code} ${l.email ?? ''}`.toLowerCase().includes(q)) : leads
   }, [leads, query])
 
-  const submitted = leads.filter((l) => COLUMN_META[l.column].phase !== 'CUSTOMER_INTAKE').length
+  const real = leads.filter((l) => !l.test)
+  const submitted = real.filter((l) => COLUMN_META[l.column].phase !== 'CUSTOMER_INTAKE').length
+  const tests = leads.length - real.length
 
   return (
     <>
@@ -67,7 +94,8 @@ export function LeadsTable({ leads, column: stage, openNew, canImport }: { leads
               )}
             </h1>
             <p className="text-sm text-muted-foreground">
-              {leads.length} {leads.length === 1 ? 'lead' : 'leads'} in onboarding · {submitted} past Customer Intake
+              {real.length} {real.length === 1 ? 'lead' : 'leads'} in onboarding · {submitted} past Customer Intake
+              {tests > 0 && ` · ${tests} test ${tests === 1 ? 'lead' : 'leads'} not counted`}
             </p>
           </div>
         </div>
@@ -98,6 +126,17 @@ export function LeadsTable({ leads, column: stage, openNew, canImport }: { leads
                 <Upload className="h-4 w-4" /> Import
               </Link>
             </>
+          )}
+          {canTest && (
+            <button
+              type="button"
+              onClick={addTestLead}
+              disabled={addingTest}
+              className="flex h-9 items-center gap-1.5 rounded-xl border border-dashed bg-card px-3 text-sm font-medium hover:bg-muted disabled:opacity-60"
+              title="Adds a lead with a sample onboarding form, for testing. Not counted in reports."
+            >
+              {addingTest ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlaskConical className="h-4 w-4" />} Add test lead
+            </button>
           )}
           <button
             type="button"
@@ -136,6 +175,7 @@ export function LeadsTable({ leads, column: stage, openNew, canImport }: { leads
                       <Link href={`/leads/${l.id}`} className="font-medium hover:underline">
                         {l.name}
                       </Link>
+                      {l.test && <TestBadge className="ml-2" />}
                       <p className="truncate text-[12px] text-muted-foreground">{l.email || 'No email yet'}</p>
                     </td>
                     <td className="px-4 py-2.5 font-mono text-[12px] text-muted-foreground">{l.code}</td>

@@ -34,6 +34,13 @@ export const MODULES = [
   // The Leads Excel template and upload (/leads/import): adds and updates
   // leads at any phase. Admins only.
   'leadImport',
+  // Test leads (lib/test-leads.ts): add a lead with a sample onboarding form,
+  // and delete test leads. Admins only.
+  'testLeads',
+  // Lead Management's User access page (/leads/access), the same list as
+  // Customer Management's Access page. Admins only; CS Managers keep their
+  // own team on /access.
+  'userAccess',
   // Later modules. Defaults follow the legacy grid; each module confirms
   // them when it is built.
   'serviceRequests',
@@ -95,6 +102,8 @@ const GRID: Record<Module, Partial<Record<AccessRole, Grant>>> = {
   // the reports never change anything.
   leadReports: { LEAD_MANAGER: R, CS_MANAGER: R, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
   leadImport: {},
+  testLeads: {},
+  userAccess: {},
 
   serviceRequests: {
     CS_MANAGER: CRUD,

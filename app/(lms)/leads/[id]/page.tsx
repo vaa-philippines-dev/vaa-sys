@@ -18,6 +18,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
         choices={choices}
         senderName={displayName(user)}
         canEdit={can(user.role, 'leads', 'update')}
+        canDeleteTest={can(user.role, 'testLeads', 'delete')}
         addedByName={names.get(customer.createdByEmail.toLowerCase()) ?? customer.createdByEmail}
       />
     </main>

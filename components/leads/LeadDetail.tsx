@@ -4,6 +4,8 @@ import { AccountInfoCards, ServiceRequestCards } from '@/components/customers/Ac
 import { LeadWorkflow } from '@/components/leads/LeadWorkflow'
 import { LeadTabs } from '@/components/leads/LeadTabs'
 import { OnboardingLinkPanel } from '@/components/leads/OnboardingLinkPanel'
+import { DeleteTestLead } from '@/components/leads/DeleteTestLead'
+import { TestBadge } from '@/components/leads/TestBadge'
 import { COLUMN_META, STAGE_META, boardColumnOf, initialsFrom } from '@/components/lms/stage-meta'
 import { STATUS_META } from '@/components/cms/status-meta'
 import { STATUS_LABELS, manilaDate, manilaDateTime } from '@/lib/customer-fields'
@@ -25,12 +27,14 @@ export function LeadDetail({
   choices,
   senderName,
   canEdit,
+  canDeleteTest,
   addedByName,
 }: {
   customer: Customer
   choices: ContractChoice[]
   senderName: string
   canEdit: boolean
+  canDeleteTest: boolean
   addedByName: string
 }) {
   const now = new Date()
@@ -126,13 +130,22 @@ export function LeadDetail({
             {initialsFrom(customer.name)}
           </span>
           <div className="min-w-0">
-            <h1 className="truncate text-xl font-semibold">{customer.name}</h1>
+            <h1 className="text-xl font-semibold">
+              {customer.name}
+              {customer.isTest && <TestBadge className="ml-2" />}
+            </h1>
             <p className="font-mono text-xs text-muted-foreground">{customer.customerCode}</p>
           </div>
         </div>
         <span className={cn('rounded-full px-3 py-1.5 text-xs font-medium', badge.soft)}>
           {customer.leadPhase === 'CUSTOMER_INTAKE' ? `${PHASE_LABELS.CUSTOMER_INTAKE} · ${badge.label}` : badge.label}
         </span>
+        {customer.isTest && (
+          <div className="flex basis-full flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed px-4 py-2.5 text-sm text-muted-foreground">
+            <p>Test lead: left out of reports and counts.</p>
+            {canDeleteTest && <DeleteTestLead customerId={customer.id} name={customer.name} />}
+          </div>
+        )}
       </header>
 
       <LeadWorkflow customer={customer} choices={choices} senderName={senderName} canEdit={canEdit} intake={onboardingLink} />

@@ -38,6 +38,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
     specialist: c.assignedSpecialistEmail ? (names.get(c.assignedSpecialistEmail) ?? c.assignedSpecialistEmail) : null,
     inReview: !!c.reviewAction,
     warnings: customerWarnings(c, vaCounts ? (vaCounts.get(c.id) ?? 0) : null),
+    test: c.isTest,
   }))
 
   return (
