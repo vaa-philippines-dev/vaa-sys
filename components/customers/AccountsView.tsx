@@ -125,128 +125,173 @@ function Personality({ submission }: { submission: NonNullable<Account['submissi
   )
 }
 
+function AccountHeader({ account: a }: { account: Account }) {
+  const sent = a.submission?.submittedAt
+  return (
+    <header className="flex flex-wrap items-baseline justify-between gap-2">
+      <div>
+        <p className="font-mono text-xs text-muted-foreground">{a.accountCode}</p>
+        <h3 className="font-semibold">{a.name}</h3>
+      </div>
+      {sent && <p className="text-xs text-muted-foreground">From the onboarding form, {sent.toLocaleString('en-PH', manilaDateTime)}</p>}
+    </header>
+  )
+}
+
 // The customer's accounts (Part 1 of the form), their tickets (Part 2) and
-// the VA personality preference (Part 3).
+// the VA personality preference (Part 3), one card per account.
 export function AccountsView({ accounts, canSetGroup }: { accounts: Account[]; canSetGroup: boolean }) {
   return (
     <div className="space-y-6">
-      {accounts.map((a) => {
-        const primary = a.contacts.find((c) => c.kind === 'PRIMARY')
-        const sent = a.submission?.submittedAt
-        return (
-          <article key={a.id} className="space-y-5 rounded-xl border bg-card p-5">
-            <header className="flex flex-wrap items-baseline justify-between gap-2">
-              <div>
-                <p className="font-mono text-xs text-muted-foreground">{a.accountCode}</p>
-                <h3 className="font-semibold">{a.name}</h3>
-              </div>
-              {sent && <p className="text-xs text-muted-foreground">From the onboarding form, {sent.toLocaleString('en-PH', manilaDateTime)}</p>}
-            </header>
+      {accounts.map((a) => (
+        <article key={a.id} className="space-y-5 rounded-xl border bg-card p-5">
+          <AccountHeader account={a} />
+          <AccountDetails account={a} />
+          <AccountRequests account={a} canSetGroup={canSetGroup} />
+        </article>
+      ))}
+    </div>
+  )
+}
 
-            <div className="grid gap-5 xl:grid-cols-2">
-              <div className="space-y-2">
-                <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Company and billing</h4>
+// The lead page's tabs show the two halves apart: the account (Part 1) and
+// the service requests (Parts 2 and 3).
+export function AccountInfoCards({ accounts }: { accounts: Account[] }) {
+  return (
+    <div className="space-y-6">
+      {accounts.map((a) => (
+        <article key={a.id} className="space-y-5 rounded-xl border bg-card p-5">
+          <AccountHeader account={a} />
+          <AccountDetails account={a} />
+        </article>
+      ))}
+    </div>
+  )
+}
+
+export function ServiceRequestCards({ accounts, canSetGroup }: { accounts: Account[]; canSetGroup: boolean }) {
+  return (
+    <div className="space-y-6">
+      {accounts.map((a) => (
+        <article key={a.id} className="space-y-5 rounded-xl border bg-card p-5">
+          <AccountHeader account={a} />
+          <AccountRequests account={a} canSetGroup={canSetGroup} sayWhenEmpty />
+        </article>
+      ))}
+    </div>
+  )
+}
+
+function AccountDetails({ account: a }: { account: Account }) {
+  const primary = a.contacts.find((c) => c.kind === 'PRIMARY')
+  return (
+    <div className="grid gap-5 xl:grid-cols-2">
+      <div className="space-y-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Company and billing</h4>
+        <Rows
+          items={[
+            ['Company', a.companyName],
+            ['DBA name', a.dbaName],
+            ['Business address', a.businessAddress ? <span key="addr" className="whitespace-pre-wrap">{a.businessAddress}</span> : null],
+            ['Website', a.website],
+            ['Time zone', a.timeZone ? timeZoneLabel(a.timeZone) : null],
+            ['Lives in', primary?.region],
+            ['Platforms', (a.platforms ?? []).map((p) => (p === 'Other' && a.platformOther ? `Other: ${a.platformOther}` : p)).join(', ')],
+            ['Invoices to', `${a.invoiceContactName ?? ''}${a.invoiceContactRole ? `, ${a.invoiceContactRole}` : ''} (${a.invoiceContactEmail})`],
+            [
+              'Pays by',
+              `${a.paymentMethod === 'OTHER' && a.paymentMethodOther ? `Other: ${a.paymentMethodOther}` : PAYMENT_LABELS[a.paymentMethod]}${a.billingCountry ? ` from ${a.billingCountry}` : ''}`,
+            ],
+            ['Payoneer or Wise', a.hasPayoneerOrWise == null ? null : a.hasPayoneerOrWise ? 'Has an active account' : 'No active account'],
+            ['Other information', a.otherInfo ? <span key="info" className="whitespace-pre-wrap">{a.otherInfo}</span> : null],
+          ]}
+        />
+      </div>
+      <div className="space-y-3">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Contacts</h4>
+        {a.contacts.map((c) => (
+          <div key={c.id} className="text-sm">
+            <p className="flex items-center gap-1.5 font-medium">
+              {c.firstName} {c.lastName}
+              {c.isFocal && (
+                <span className="inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-1.5 text-[11px] font-medium text-primary">
+                  <Star className="h-3 w-3" /> Main contact
+                </span>
+              )}
+            </p>
+            <p className="text-muted-foreground">
+              {c.kind === 'PRIMARY' ? 'Primary' : 'Secondary'}
+              {c.role && ` · ${c.role}`}
+            </p>
+            <p className="text-muted-foreground">{[c.email, c.whatsapp].filter(Boolean).join(' · ')}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function AccountRequests({ account: a, canSetGroup, sayWhenEmpty = false }: { account: Account; canSetGroup: boolean; sayWhenEmpty?: boolean }) {
+  if (a.tickets.length === 0 && !a.submission) return sayWhenEmpty ? <p className="text-sm text-muted-foreground">No service requests on this account yet.</p> : null
+  return (
+    <>
+      {a.tickets.map((t) => (
+        <div key={t.id} className="space-y-2">
+          <h4 className="flex flex-wrap items-baseline gap-x-2 text-sm font-semibold">
+            <span className="font-mono">{ticketCode(t.ticketNumber)}</span>
+            <span className="font-normal text-muted-foreground">
+              {t.requests.length} VA {t.requests.length === 1 ? 'request' : 'requests'} · opened {t.createdAt.toLocaleDateString('en-PH', manilaDate)}
+            </span>
+          </h4>
+          <ul className="space-y-2">
+            {t.requests.map((r) => (
+              <li key={r.id} className="rounded-lg border p-3">
+                <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="font-mono text-xs text-muted-foreground">{subTicketCode(t.ticketNumber, r.lineNo)}</p>
+                    <p className="text-sm font-medium">
+                      {r.numberOfVas > 1 && `${r.numberOfVas} × `}
+                      {r.service}
+                      {r.platform && ` on ${r.platform}`}
+                    </p>
+                  </div>
+                  {canSetGroup ? (
+                    <RequestGroupSelect requestId={r.id} value={r.requestGroup} />
+                  ) : (
+                    <span className="rounded-full border px-2 text-xs">{REQUEST_GROUP_LABELS[r.requestGroup]}</span>
+                  )}
+                </div>
                 <Rows
                   items={[
-                    ['Company', a.companyName],
-                    ['DBA name', a.dbaName],
-                    ['Business address', a.businessAddress ? <span key="addr" className="whitespace-pre-wrap">{a.businessAddress}</span> : null],
-                    ['Website', a.website],
-                    ['Time zone', a.timeZone ? timeZoneLabel(a.timeZone) : null],
-                    ['Lives in', primary?.region],
-                    ['Platforms', (a.platforms ?? []).map((p) => (p === 'Other' && a.platformOther ? `Other: ${a.platformOther}` : p)).join(', ')],
-                    ['Invoices to', `${a.invoiceContactName ?? ''}${a.invoiceContactRole ? `, ${a.invoiceContactRole}` : ''} (${a.invoiceContactEmail})`],
+                    ['Schedule', `${SCHEDULE_LABELS[r.scheduleType]}: ${schedule(r, a.timeZone)}`],
                     [
-                      'Pays by',
-                      `${a.paymentMethod === 'OTHER' && a.paymentMethodOther ? `Other: ${a.paymentMethodOther}` : PAYMENT_LABELS[a.paymentMethod]}${a.billingCountry ? ` from ${a.billingCountry}` : ''}`,
+                      'Night differential',
+                      r.nightDifferential ? (
+                        <span className="inline-flex items-center gap-1 text-warning">
+                          <Moon className="h-3 w-3" /> Applies (works between 10 PM and 6 AM PH time)
+                        </span>
+                      ) : null,
                     ],
-                    ['Payoneer or Wise', a.hasPayoneerOrWise == null ? null : a.hasPayoneerOrWise ? 'Has an active account' : 'No active account'],
-                    ['Other information', a.otherInfo ? <span key="info" className="whitespace-pre-wrap">{a.otherInfo}</span> : null],
+                    ['Additional hours', r.additionalHours ?? (r.additionalHoursPerDay != null ? `${hours(r.additionalHoursPerDay)} h a day` : null)],
+                    ['Target start', r.targetStartDate.toLocaleDateString('en-PH', { ...manilaDate, timeZone: 'UTC' })],
+                    ['Tasks', r.tasks ? <span key="t" className="whitespace-pre-wrap">{r.tasks}</span> : null],
+                    ['Tools', r.tools],
+                    ['Task tracker', r.taskTracker == null ? null : r.taskTracker ? 'Yes' : 'No'],
+                    ['Group set by', r.requestGroupSetBy],
                   ]}
                 />
-              </div>
-              <div className="space-y-3">
-                <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Contacts</h4>
-                {a.contacts.map((c) => (
-                  <div key={c.id} className="text-sm">
-                    <p className="flex items-center gap-1.5 font-medium">
-                      {c.firstName} {c.lastName}
-                      {c.isFocal && (
-                        <span className="inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-1.5 text-[11px] font-medium text-primary">
-                          <Star className="h-3 w-3" /> Main contact
-                        </span>
-                      )}
-                    </p>
-                    <p className="text-muted-foreground">
-                      {c.kind === 'PRIMARY' ? 'Primary' : 'Secondary'}
-                      {c.role && ` · ${c.role}`}
-                    </p>
-                    <p className="text-muted-foreground">{[c.email, c.whatsapp].filter(Boolean).join(' · ')}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {a.tickets.map((t) => (
-              <div key={t.id} className="space-y-2">
-                <h4 className="flex flex-wrap items-baseline gap-x-2 text-sm font-semibold">
-                  <span className="font-mono">{ticketCode(t.ticketNumber)}</span>
-                  <span className="font-normal text-muted-foreground">
-                    {t.requests.length} VA {t.requests.length === 1 ? 'request' : 'requests'} · opened {t.createdAt.toLocaleDateString('en-PH', manilaDate)}
-                  </span>
-                </h4>
-                <ul className="space-y-2">
-                  {t.requests.map((r) => (
-                    <li key={r.id} className="rounded-lg border p-3">
-                      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                          <p className="font-mono text-xs text-muted-foreground">{subTicketCode(t.ticketNumber, r.lineNo)}</p>
-                          <p className="text-sm font-medium">
-                            {r.numberOfVas > 1 && `${r.numberOfVas} × `}
-                            {r.service}
-                            {r.platform && ` on ${r.platform}`}
-                          </p>
-                        </div>
-                        {canSetGroup ? (
-                          <RequestGroupSelect requestId={r.id} value={r.requestGroup} />
-                        ) : (
-                          <span className="rounded-full border px-2 text-xs">{REQUEST_GROUP_LABELS[r.requestGroup]}</span>
-                        )}
-                      </div>
-                      <Rows
-                        items={[
-                          ['Schedule', `${SCHEDULE_LABELS[r.scheduleType]}: ${schedule(r, a.timeZone)}`],
-                          [
-                            'Night differential',
-                            r.nightDifferential ? (
-                              <span className="inline-flex items-center gap-1 text-warning">
-                                <Moon className="h-3 w-3" /> Applies (works between 10 PM and 6 AM PH time)
-                              </span>
-                            ) : null,
-                          ],
-                          ['Additional hours', r.additionalHours ?? (r.additionalHoursPerDay != null ? `${hours(r.additionalHoursPerDay)} h a day` : null)],
-                          ['Target start', r.targetStartDate.toLocaleDateString('en-PH', { ...manilaDate, timeZone: 'UTC' })],
-                          ['Tasks', r.tasks ? <span key="t" className="whitespace-pre-wrap">{r.tasks}</span> : null],
-                          ['Tools', r.tools],
-                          ['Task tracker', r.taskTracker == null ? null : r.taskTracker ? 'Yes' : 'No'],
-                          ['Group set by', r.requestGroupSetBy],
-                        ]}
-                      />
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              </li>
             ))}
+          </ul>
+        </div>
+      ))}
 
-            {a.submission && (
-              <div className="space-y-2">
-                <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">VA personality preference</h4>
-                <Personality submission={a.submission} />
-              </div>
-            )}
-          </article>
-        )
-      })}
-    </div>
+      {a.submission && (
+        <div className="space-y-2">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">VA personality preference</h4>
+          <Personality submission={a.submission} />
+        </div>
+      )}
+    </>
   )
 }

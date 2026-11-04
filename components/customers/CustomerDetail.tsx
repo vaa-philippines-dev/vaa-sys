@@ -6,8 +6,7 @@ import { CustomerEditForm, NotesPanel, SpecialistSelect } from '@/components/cus
 import { ReviewButtons } from '@/components/cms/ReviewButtons'
 import { ActivityTable } from '@/components/cms/ActivityTable'
 import { OnboardingLinkPanel } from '@/components/leads/OnboardingLinkPanel'
-import { OnboardingStepper } from '@/components/lms/OnboardingStepper'
-import { STAGE_META, initialsFrom } from '@/components/lms/stage-meta'
+import { STAGE_META } from '@/components/lms/stage-meta'
 import { STATUS_META } from '@/components/cms/status-meta'
 import { StatusRibbon } from '@/components/cms/StatusRibbon'
 import { HandoffButton } from '@/components/customers/HandoffButton'
@@ -40,23 +39,19 @@ export type CustomerCmsData = {
   takeovers: { id: string; specialistName: string; startDate: Date; endDate: Date; state: string }[]
 }
 
-// One customer page for both areas. From Lead Management it leads with the
-// onboarding link; from Customer Management with the status controls.
+// A customer's page in Customer Management, led by the status controls.
+// Lead Management has its own page for the same customer
+// (components/leads/LeadDetail.tsx).
 export function CustomerDetail({
   customer,
   role,
   senderName,
-  from,
   cms,
-  workflow,
 }: {
   customer: Customer
   role: AccessRole
   senderName: string
-  from: 'customers' | 'leads'
   cms?: CustomerCmsData
-  // Lead Management's workflow panel (components/leads/LeadWorkflow.tsx).
-  workflow?: React.ReactNode
 }) {
   const now = new Date()
   const liveLink = customer.onboardingLinks.find((l) => !l.revokedAt && !l.submittedAt && l.expiresAt > now) ?? null
@@ -77,127 +72,95 @@ export function CustomerDetail({
 
   return (
     <div className="space-y-6">
-      <Link href={from === 'leads' ? '/leads' : '/customers'} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="h-4 w-4" /> {from === 'leads' ? 'Leads' : 'Customers'}
+      <Link href="/customers" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="h-4 w-4" /> Customers
       </Link>
 
-      {from === 'leads' ? (
-        <>
-          {/* Lead Management: the LMS lead header and progress stepper. */}
-          <section className="flex flex-wrap items-start justify-between gap-4 rounded-2xl border bg-card p-5">
-            <div className="flex min-w-0 items-start gap-4">
-              <span className={cn('flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-lg font-semibold', STAGE_META[customer.stage].soft)} aria-hidden>
-                {initialsFrom(customer.name)}
-              </span>
-              <div className="min-w-0">
-                <h1 className="text-xl font-semibold">{customer.name}</h1>
-                <p className="font-mono text-xs text-muted-foreground">{customer.customerCode}</p>
-                {customer.email && <p className="mt-2 inline-flex rounded-full border px-3 py-1 text-xs">{customer.email}</p>}
-                {customer.notes && <p className="mt-2 max-w-prose whitespace-pre-wrap text-sm text-muted-foreground">{customer.notes}</p>}
-              </div>
-            </div>
-            <div className="shrink-0 text-right">
-              <span className={cn('inline-block rounded-full px-3 py-1.5 text-xs font-medium', STAGE_META[customer.stage].soft)}>{STAGE_META[customer.stage].label}</span>
-              <p className="mt-2 text-xs text-muted-foreground">
-                Added {customer.createdAt.toLocaleDateString('en-PH', manilaDate)} by {customer.createdByEmail}
-              </p>
-            </div>
-          </section>
-          <OnboardingStepper
-            addedAt={customer.createdAt}
-            linkSentAt={firstDate(customer.onboardingLinks.map((l) => l.createdAt))}
-            openedAt={firstDate(customer.onboardingLinks.map((l) => l.openedAt))}
-            submittedAt={latestSubmission?.submittedAt ?? null}
-          />
-          {workflow}
-        </>
-      ) : (
-        /* Customer Management: name and status up front, then the ribbon of
-           every status the customer has been through. */
-        <section className="space-y-5 rounded-2xl border bg-card p-6">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0">
-              <p className="font-mono text-xs text-muted-foreground">{customer.customerCode}</p>
-              <h1 className="mt-1 font-display text-2xl font-semibold">{customer.name}</h1>
-              {customer.email && <p className="text-sm text-muted-foreground">{customer.email}</p>}
-              {customer.notes && <p className="mt-2 max-w-prose whitespace-pre-wrap text-sm text-muted-foreground">{customer.notes}</p>}
-            </div>
-            <div className="flex flex-col items-end gap-1.5 text-right">
-              <span className={cn('inline-flex h-7 items-center rounded-full px-3 text-sm font-medium', STATUS_META[customer.status].soft)}>{STATUS_META[customer.status].label}</span>
-              <p className="text-xs text-muted-foreground">
-                since {customer.statusChangedAt.toLocaleDateString('en-PH', manilaDate)}
-                {customer.status === 'PENDING' &&
-                  ` · ${customer.leadPhase === 'CUSTOMER_INTAKE' ? STAGE_META[customer.stage].label.toLowerCase() : PHASE_LABELS[customer.leadPhase]}`}
-                {customer.requestType === 'SPECIAL' && ' · Special Request'}
-              </p>
-            </div>
+      {/* Name and status up front, then the ribbon of every status the
+          customer has been through. */}
+      <section className="space-y-5 rounded-2xl border bg-card p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="font-mono text-xs text-muted-foreground">{customer.customerCode}</p>
+            <h1 className="mt-1 font-display text-2xl font-semibold">{customer.name}</h1>
+            {customer.email && <p className="text-sm text-muted-foreground">{customer.email}</p>}
+            {customer.notes && <p className="mt-2 max-w-prose whitespace-pre-wrap text-sm text-muted-foreground">{customer.notes}</p>}
           </div>
-          {customer.leadPhase === 'CUSTOMER_SUCCESS_HANDOFF' && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-sm">
-              <p>
-                <span className="font-medium">Customer Success Handoff.</span> Lead Management handed this customer over
-                {customer.requestType === 'SPECIAL' ? ' as a Special Request (meet the VA first)' : ' with the contract and first payment confirmed'}. Onboard them officially,
-                then mark it done.
-              </p>
-              {cms?.canHandoff && <HandoffButton customerId={customer.id} special={customer.requestType === 'SPECIAL'} />}
-            </div>
-          )}
-          {customer.reviewAction && customer.statusBeforeReview && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
-              <p className="flex items-start gap-2">
-                <Hourglass className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-                <span>
-                  Changed from {STATUS_LABELS[customer.statusBeforeReview]} to {STATUS_LABELS[customer.reviewAction]} by {cms?.reviewByName ?? customer.reviewRequestedByEmail}
-                  {customer.reviewRequestedAt && ` on ${customer.reviewRequestedAt.toLocaleDateString('en-PH', manilaDate)}`}. Waiting for a CS Manager’s review.
-                </span>
-              </p>
-              {cms?.canReview && <ReviewButtons kind="customer" id={customer.id} />}
-            </div>
-          )}
-          <StatusRibbon logs={customer.statusLogs} now={now} />
-          {cms && (
-            <dl className="grid gap-x-6 gap-y-3 border-t pt-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
-              <div>
-                <dt className="text-xs text-muted-foreground">CS Specialist</dt>
-                <dd className="mt-0.5">
-                  {cms.canAssign ? <SpecialistSelect customerId={customer.id} current={customer.assignedSpecialistEmail} team={cms.team} /> : (cms.specialistName ?? 'Unassigned')}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">First payment</dt>
-                <dd className="mt-0.5">{customer.noPaymentYet || !customer.paymentDate ? 'No payment yet' : day(customer.paymentDate)}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Terminations</dt>
-                <dd className="mt-0.5 font-display tabular-nums">{customer.terminationCount}</dd>
-              </div>
-              <div>
-                <dt className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <RotateCcw className="h-3 w-3" /> Reactivations
-                </dt>
-                <dd className="mt-0.5 font-display tabular-nums">{customer.reactivationCount}</dd>
-              </div>
-            </dl>
-          )}
-          {cms && cms.warnings.length > 0 && (
-            <ul className="space-y-1">
-              {cms.warnings.map((w) => (
-                <li key={w} className="flex items-center gap-2 text-sm text-warning">
-                  <AlertTriangle className="h-4 w-4" /> {WARNING_LABELS[w]}
-                </li>
-              ))}
-            </ul>
-          )}
-          {cms && cms.takeovers.length > 0 && (
+          <div className="flex flex-col items-end gap-1.5 text-right">
+            <span className={cn('inline-flex h-7 items-center rounded-full px-3 text-sm font-medium', STATUS_META[customer.status].soft)}>{STATUS_META[customer.status].label}</span>
             <p className="text-xs text-muted-foreground">
-              {cms.takeovers.map((t) => `${t.state === 'ACTIVE' ? 'Covered' : 'To be covered'} by ${t.specialistName}, ${day(t.startDate)} – ${day(t.endDate)}`).join(' · ')}
+              since {customer.statusChangedAt.toLocaleDateString('en-PH', manilaDate)}
+              {customer.status === 'PENDING' &&
+                ` · ${customer.leadPhase === 'CUSTOMER_INTAKE' ? STAGE_META[customer.stage].label.toLowerCase() : PHASE_LABELS[customer.leadPhase]}`}
+              {customer.requestType === 'SPECIAL' && ' · Special Request'}
             </p>
-          )}
+          </div>
+        </div>
+        {customer.leadPhase === 'CUSTOMER_SUCCESS_HANDOFF' && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-sm">
+            <p>
+              <span className="font-medium">Customer Success Handoff.</span> Lead Management handed this customer over
+              {customer.requestType === 'SPECIAL' ? ' as a Special Request (meet the VA first)' : ' with the contract and first payment confirmed'}. Onboard them officially,
+              then mark it done.
+            </p>
+            {cms?.canHandoff && <HandoffButton customerId={customer.id} special={customer.requestType === 'SPECIAL'} />}
+          </div>
+        )}
+        {customer.reviewAction && customer.statusBeforeReview && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
+            <p className="flex items-start gap-2">
+              <Hourglass className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+              <span>
+                Changed from {STATUS_LABELS[customer.statusBeforeReview]} to {STATUS_LABELS[customer.reviewAction]} by {cms?.reviewByName ?? customer.reviewRequestedByEmail}
+                {customer.reviewRequestedAt && ` on ${customer.reviewRequestedAt.toLocaleDateString('en-PH', manilaDate)}`}. Waiting for a CS Manager’s review.
+              </span>
+            </p>
+            {cms?.canReview && <ReviewButtons kind="customer" id={customer.id} />}
+          </div>
+        )}
+        <StatusRibbon logs={customer.statusLogs} now={now} />
+        {cms && (
+          <dl className="grid gap-x-6 gap-y-3 border-t pt-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <dt className="text-xs text-muted-foreground">CS Specialist</dt>
+              <dd className="mt-0.5">
+                {cms.canAssign ? <SpecialistSelect customerId={customer.id} current={customer.assignedSpecialistEmail} team={cms.team} /> : (cms.specialistName ?? 'Unassigned')}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">First payment</dt>
+              <dd className="mt-0.5">{customer.noPaymentYet || !customer.paymentDate ? 'No payment yet' : day(customer.paymentDate)}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">Terminations</dt>
+              <dd className="mt-0.5 font-display tabular-nums">{customer.terminationCount}</dd>
+            </div>
+            <div>
+              <dt className="flex items-center gap-1 text-xs text-muted-foreground">
+                <RotateCcw className="h-3 w-3" /> Reactivations
+              </dt>
+              <dd className="mt-0.5 font-display tabular-nums">{customer.reactivationCount}</dd>
+            </div>
+          </dl>
+        )}
+        {cms && cms.warnings.length > 0 && (
+          <ul className="space-y-1">
+            {cms.warnings.map((w) => (
+              <li key={w} className="flex items-center gap-2 text-sm text-warning">
+                <AlertTriangle className="h-4 w-4" /> {WARNING_LABELS[w]}
+              </li>
+            ))}
+          </ul>
+        )}
+        {cms && cms.takeovers.length > 0 && (
           <p className="text-xs text-muted-foreground">
-            Added {customer.createdAt.toLocaleDateString('en-PH', manilaDate)} by {customer.createdByEmail}
+            {cms.takeovers.map((t) => `${t.state === 'ACTIVE' ? 'Covered' : 'To be covered'} by ${t.specialistName}, ${day(t.startDate)} – ${day(t.endDate)}`).join(' · ')}
           </p>
-        </section>
-      )}
+        )}
+        <p className="text-xs text-muted-foreground">
+          Added {customer.createdAt.toLocaleDateString('en-PH', manilaDate)} by {customer.createdByEmail}
+        </p>
+      </section>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="min-w-0 space-y-6">
@@ -317,9 +280,4 @@ export function CustomerDetail({
       </div>
     </div>
   )
-}
-
-function firstDate(dates: (Date | null)[]): Date | null {
-  const real = dates.filter((d): d is Date => d !== null)
-  return real.length ? new Date(Math.min(...real.map((d) => d.getTime()))) : null
 }

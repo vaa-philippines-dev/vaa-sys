@@ -6,7 +6,7 @@ import { SignOutButton } from '@/components/layout/SignOutButton'
 import { LmsNav } from '@/components/lms/LmsNav'
 import { SystemSwitcher } from '@/components/lms/SystemSwitcher'
 import { EXTERNAL_SYSTEMS, type SystemLink } from '@/components/lms/systems'
-import { BOARD_COLUMNS, boardColumnOf, initialsFrom, type BoardColumn } from '@/components/lms/stage-meta'
+import { initialsFrom } from '@/components/lms/stage-meta'
 import { redirect } from 'next/navigation'
 import { requireSignedIn, displayName } from '@/lib/auth'
 import { canUse, homeFor, ROLE_LABELS } from '@/lib/access-fields'
@@ -28,8 +28,6 @@ export default async function LmsLayout({ children }: { children: React.ReactNod
   const home = board ? '/leads' : '/leads/reports'
 
   const leads = board ? await listLeads() : []
-  const columns = leads.map((l) => boardColumnOf(l.stage, l.leadPhase))
-  const byColumn = Object.fromEntries(BOARD_COLUMNS.map((c) => [c, columns.filter((x) => x === c).length])) as Record<BoardColumn, number>
 
   const others: SystemLink[] = [
     ...(canUse(user.role, 'customers') ? [{ label: 'Customer Management', href: '/customers' }] : []),
@@ -52,7 +50,6 @@ export default async function LmsLayout({ children }: { children: React.ReactNod
           <Suspense>
             <LmsNav
               total={leads.length}
-              byColumn={byColumn}
               board={board}
               showContracts={can(user.role, 'contracts')}
               showReports={reports}
