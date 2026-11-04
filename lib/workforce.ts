@@ -41,6 +41,16 @@ export async function departmentNames(ids: string[]): Promise<Map<string, string
   return new Map(rows.map((r) => [r.id, r.name]))
 }
 
+// Everyone who can be given access, for the Access page's name picker:
+// active people with a company mailbox (VAs and bots are left out).
+export async function listStaff(domain: string): Promise<StaffName[]> {
+  return prisma.$queryRaw<StaffName[]>`
+    SELECT lower(email) AS email, trim(first_name || ' ' || last_name) AS name
+    FROM public.users
+    WHERE is_active AND NOT is_bot AND lower(email) LIKE ${'%' + domain}
+    ORDER BY first_name, last_name`.catch(() => [])
+}
+
 // Full names for a set of work emails (lowercase keys).
 export async function staffNames(emails: string[]): Promise<Map<string, string>> {
   const list = [...new Set(emails.filter(Boolean).map((e) => e.toLowerCase()))]

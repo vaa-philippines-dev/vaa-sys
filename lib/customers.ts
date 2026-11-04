@@ -8,6 +8,10 @@ import { CUSTOMER_STATUSES, onboardingStage, type CustomerMatch, type CustomerSt
 
 const linkFields = { revokedAt: true, expiresAt: true, openedAt: true, submittedAt: true } as const
 
+// Every count, total and report uses real customers only: test leads
+// (lib/test-leads.ts) are listed, with a Test badge, but never counted.
+export const REAL_CUSTOMERS = { isTest: false } satisfies Prisma.CustomerWhereInput
+
 // scope: the person's customer scope from lib/scope.ts (null = everyone).
 export async function listCustomers(params: { q?: string; status?: string; specialist?: string; review?: boolean; scope?: Prisma.CustomerWhereInput | null }) {
   const q = params.q?.trim()
@@ -40,7 +44,7 @@ export async function listCustomers(params: { q?: string; status?: string; speci
         tickets: { select: { requests: { select: { numberOfVas: true } } } },
       },
     }),
-    prisma.customer.groupBy({ by: ['status'], where: scoped, _count: { _all: true } }),
+    prisma.customer.groupBy({ by: ['status'], where: { AND: [scoped, REAL_CUSTOMERS] }, _count: { _all: true } }),
   ])
   const byStatus = Object.fromEntries(counts.map((c) => [c.status, c._count._all])) as Partial<Record<CustomerStatus, number>>
   return {
@@ -60,7 +64,7 @@ export async function listCustomers(params: { q?: string; status?: string; speci
 // can see, and the latest status changes for the activity feed.
 export async function customerPortfolio(now: Date, scope: Prisma.CustomerWhereInput | null = null) {
   const weekAgo = new Date(now.getTime() - 7 * 86_400_000)
-  const customer = scope ?? {}
+  const customer: Prisma.CustomerWhereInput = { AND: [scope ?? {}, REAL_CUSTOMERS] }
   const [accounts, vas, changesThisWeek, recent] = await Promise.all([
     prisma.account.count({ where: { customer } }),
     prisma.ticketRequest.aggregate({ where: { ticket: { customer } }, _sum: { numberOfVas: true } }),
@@ -123,7 +127,7 @@ export async function getCustomer(id: string) {
 }
 
 export async function countCustomers() {
-  const [total, pending] = await Promise.all([prisma.customer.count(), prisma.customer.count({ where: { status: 'PENDING' } })])
+  const [total, pending] = await Promise.all([prisma.customer.count({ where: REAL_CUSTOMERS }), prisma.customer.count({ where: { ...REAL_CUSTOMERS, status: 'PENDING' } })])
   return { total, pending }
 }
 

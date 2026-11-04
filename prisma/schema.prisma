@@ -186,6 +186,10 @@ model Customer {
   createdByEmail          String          @map("created_by_email")
   createdAt               DateTime        @default(now()) @map("created_at")
   updatedAt               DateTime        @updatedAt @map("updated_at")
+  // A test lead an admin made to try the workflow (lib/test-leads.ts). It is
+  // listed with a Test badge but left out of reports and counts, and only
+  // test leads can be deleted.
+  isTest                  Boolean         @default(false) @map("is_test")
 
   // Lead workflow (lib/lead-phase.ts). leadPhase is a cache of the phase the
   // facts below (and the onboarding form) add up to; every change of it is

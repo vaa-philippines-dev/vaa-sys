@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { REAL_CUSTOMERS } from '@/lib/customers'
 import type { Prisma } from '@/src/generated/prisma/client'
 import { ACCOUNT_STATUSES, type AccountStatus } from '@/lib/customer-fields'
 
@@ -43,7 +44,8 @@ export async function listAccounts(params: { q?: string; status?: string; scope:
         _count: { select: { managers: true } },
       },
     }),
-    prisma.account.groupBy({ by: ['status'], where: { customer: params.scope ?? {} }, _count: { _all: true } }),
+    // Counts leave out test leads' accounts (lib/test-leads.ts).
+    prisma.account.groupBy({ by: ['status'], where: { customer: { AND: [params.scope ?? {}, REAL_CUSTOMERS] } }, _count: { _all: true } }),
   ])
   return { rows, byStatus: Object.fromEntries(counts.map((c) => [c.status, c._count._all])) as Partial<Record<AccountStatus, number>> }
 }

@@ -13,7 +13,7 @@ import { requireSignedIn, displayName } from '@/lib/auth'
 import { canUse, homeFor, ROLE_LABELS } from '@/lib/access-fields'
 import { can } from '@/lib/permissions'
 import { customerScopeWhere } from '@/lib/scope'
-import { countPendingReviews } from '@/lib/customers'
+import { REAL_CUSTOMERS, countPendingReviews } from '@/lib/customers'
 import { redirect } from 'next/navigation'
 import type { CustomerStatus } from '@/lib/customer-fields'
 
@@ -27,7 +27,7 @@ export default async function CmsLayout({ children }: { children: React.ReactNod
 
   const scope = await customerScopeWhere(user)
   const [counts, reviews] = await Promise.all([
-    prisma.customer.groupBy({ by: ['status'], where: scope ?? {}, _count: { _all: true } }),
+    prisma.customer.groupBy({ by: ['status'], where: { AND: [scope ?? {}, REAL_CUSTOMERS] }, _count: { _all: true } }),
     can(r, 'approvals', 'update') ? countPendingReviews() : Promise.resolve(0),
   ])
   const byStatus = Object.fromEntries(STATUS_ORDER.map((s) => [s, counts.find((c) => c.status === s)?._count._all ?? 0])) as Record<CustomerStatus, number>

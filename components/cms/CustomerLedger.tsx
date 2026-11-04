@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { AlertTriangle, Hourglass } from 'lucide-react'
 import { STATUS_META } from '@/components/cms/status-meta'
+import { TestBadge } from '@/components/leads/TestBadge'
 import { WARNING_LABELS, type CustomerStatus, type CustomerWarning } from '@/lib/customer-fields'
 import { cn } from '@/lib/utils'
 
@@ -16,6 +17,8 @@ export type LedgerRow = {
   specialist: string | null
   inReview: boolean
   warnings: CustomerWarning[]
+  // A test lead (lib/test-leads.ts): listed, never counted.
+  test: boolean
 }
 
 // The customer list as a ledger: one row per customer, its status as a
@@ -46,6 +49,7 @@ export function CustomerLedger({ rows }: { rows: LedgerRow[] }) {
                 <Link href={`/customers/${r.id}`} className="font-medium after:absolute after:inset-0 group-hover:underline">
                   {r.name}
                 </Link>
+                {r.test && <TestBadge className="ml-2" />}
                 <p className="font-mono text-[11px] text-muted-foreground">
                   {r.code}
                   {r.email && <span className="hidden font-sans lg:inline"> · {r.email}</span>}

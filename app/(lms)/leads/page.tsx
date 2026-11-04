@@ -26,13 +26,21 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
       day: dayOf(l.createdAt, now),
       addedOn: l.createdAt.toLocaleDateString('en-PH', manilaDate),
       addedBy: names.get(l.createdByEmail.toLowerCase()) ?? l.createdByEmail,
+      test: l.isTest,
     }))
     .filter((l) => !column || l.column === column)
 
   return (
     <main className="flex w-full flex-1 flex-col gap-5 px-4 py-6 sm:px-6">
-      <StatsRow leads={leads} now={now} />
-      <LeadsTable leads={rows} column={column} openNew={openNew === '1'} canImport={can(user.role, 'leadImport', 'create')} />
+      {/* Test leads are listed but never counted. */}
+      <StatsRow leads={leads.filter((l) => !l.isTest)} now={now} />
+      <LeadsTable
+        leads={rows}
+        column={column}
+        openNew={openNew === '1'}
+        canImport={can(user.role, 'leadImport', 'create')}
+        canTest={can(user.role, 'testLeads', 'create')}
+      />
     </main>
   )
 }

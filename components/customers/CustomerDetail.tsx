@@ -7,6 +7,7 @@ import { ReviewButtons } from '@/components/cms/ReviewButtons'
 import { ActivityTable } from '@/components/cms/ActivityTable'
 import { OnboardingLinkPanel } from '@/components/leads/OnboardingLinkPanel'
 import { STAGE_META } from '@/components/lms/stage-meta'
+import { TestBadge } from '@/components/leads/TestBadge'
 import { STATUS_META } from '@/components/cms/status-meta'
 import { StatusRibbon } from '@/components/cms/StatusRibbon'
 import { HandoffButton } from '@/components/customers/HandoffButton'
@@ -82,7 +83,10 @@ export function CustomerDetail({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="font-mono text-xs text-muted-foreground">{customer.customerCode}</p>
-            <h1 className="mt-1 font-display text-2xl font-semibold">{customer.name}</h1>
+            <h1 className="mt-1 font-display text-2xl font-semibold">
+              {customer.name}
+              {customer.isTest && <TestBadge className="ml-2" />}
+            </h1>
             {customer.email && <p className="text-sm text-muted-foreground">{customer.email}</p>}
             {customer.notes && <p className="mt-2 max-w-prose whitespace-pre-wrap text-sm text-muted-foreground">{customer.notes}</p>}
           </div>
