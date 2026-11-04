@@ -1,4 +1,4 @@
-import { Check, ExternalLink, Mail } from 'lucide-react'
+import { Check, Circle, ExternalLink, Mail } from 'lucide-react'
 import { buttonVariants } from '@/components/ui/button'
 import { CopyButton } from '@/components/leads/OnboardingLinkPanel'
 import { ConfirmContractForm, ContractPicker, MarkContractSent, RequestTypeSwitch } from '@/components/leads/LeadWorkflowControls'
@@ -14,14 +14,43 @@ type Customer = NonNullable<Awaited<ReturnType<typeof getCustomer>>>
 const when = (d: Date) => d.toLocaleString('en-PH', manilaDateTime)
 const day = (d: Date) => new Date(`${dayString(d)}T00:00:00+08:00`).toLocaleDateString('en-PH', manilaDate)
 
+const short = new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', timeZone: 'Asia/Manila' })
+
+function firstDate(dates: (Date | null)[]): Date | null {
+  const real = dates.filter((d): d is Date => d !== null)
+  return real.length ? new Date(Math.min(...real.map((d) => d.getTime()))) : null
+}
+
 // Lead Management's workflow on the lead's page: the phases in the order
-// this lead goes through them, the request type, then what the current
-// phase needs (pick and send the contract, confirm the signed contract and
-// first payment). The CS team's handoff happens in Customer Management.
-export function LeadWorkflow({ customer, choices, senderName, canEdit }: { customer: Customer; choices: ContractChoice[]; senderName: string; canEdit: boolean }) {
+// this lead goes through them (Customer Intake with its onboarding steps),
+// the request type, then what the current phase needs (pick and send the
+// contract, confirm the signed contract and first payment). `intake` (the
+// onboarding link) goes right under the phases. The CS team's handoff
+// happens in Customer Management.
+export function LeadWorkflow({
+  customer,
+  choices,
+  senderName,
+  canEdit,
+  intake,
+}: {
+  customer: Customer
+  choices: ContractChoice[]
+  senderName: string
+  canEdit: boolean
+  intake?: React.ReactNode
+}) {
   // An imported lead can be past Customer Intake without the form.
   const formSubmitted = customer.submissions.length > 0 || !!customer.intakeCompletedAt
   const phase = customer.leadPhase
+  const submittedAt = firstDate(customer.submissions.map((s) => s.submittedAt))
+  const intakeSteps = [
+    { label: 'Lead added', at: customer.createdAt },
+    { label: 'Link sent', at: firstDate(customer.onboardingLinks.map((l) => l.createdAt)) },
+    { label: 'Form opened', at: firstDate(customer.onboardingLinks.map((l) => l.openedAt)) },
+    { label: 'Form submitted', at: submittedAt },
+  ]
+  const imported = !submittedAt && customer.intakeCompletedAt
   const order = phaseOrder(customer.requestType)
   const at = order.indexOf(phase)
   const doneAt: Partial<Record<LeadPhase, Date | null>> = {
@@ -43,7 +72,14 @@ export function LeadWorkflow({ customer, choices, senderName, canEdit }: { custo
   const mailto = email ? `mailto:${encodeURIComponent(customer.email ?? '')}?subject=${encodeURIComponent(email.subject)}&body=${encodeURIComponent(email.body)}` : null
   const confirmed = !!customer.contractConfirmedAt
   const sentOther = !!customer.contractSentAt && !!contractId && customer.contractSentId !== contractId
-  const mayChangeType = canEdit && formSubmitted && !customer.handoffCompletedAt && phase !== 'NEW_CUSTOMER_ONBOARDED'
+  // Special Request is chosen in Contract & Billing Initiation only, before
+  // the contract goes out. A Special Request lead goes straight to Customer
+  // Success Handoff, so it can be put back to Regular there, until the CS
+  // team has onboarded the customer.
+  const mayChangeType =
+    canEdit &&
+    !customer.handoffCompletedAt &&
+    (customer.requestType === 'REGULAR' ? phase === 'CONTRACT_BILLING_INITIATION' : phase === 'CUSTOMER_SUCCESS_HANDOFF')
 
   return (
     <div className="space-y-6">
@@ -85,6 +121,19 @@ export function LeadWorkflow({ customer, choices, senderName, canEdit }: { custo
                 <span className="min-w-0">
                   <span className="block text-[13px] font-medium leading-tight">{PHASE_LABELS[p]}</span>
                   <span className="text-[11px] text-muted-foreground">{done ? (date ? when(date) : 'Moved on') : current ? 'Now' : 'Not yet'}</span>
+                  {p === 'CUSTOMER_INTAKE' && (
+                    // The onboarding steps, each done when it actually happened.
+                    <ul className="mt-2 space-y-1">
+                      {intakeSteps.map((s) => (
+                        <li key={s.label} className={cn('flex items-center gap-1.5 text-[11px]', s.at ? 'text-foreground' : 'text-muted-foreground')} title={s.at ? when(s.at) : undefined}>
+                          {s.at ? <Check className="h-3 w-3 shrink-0 text-primary" /> : <Circle className="h-3 w-3 shrink-0" />}
+                          <span className="min-w-0 flex-1 truncate">{s.label}</span>
+                          <span className="shrink-0 tabular-nums text-muted-foreground">{s.at ? short.format(s.at) : '–'}</span>
+                        </li>
+                      ))}
+                      {imported && <li className="text-[11px] text-muted-foreground">Marked done on import, {short.format(imported)}</li>}
+                    </ul>
+                  )}
                 </span>
               </li>
             )
@@ -93,7 +142,12 @@ export function LeadWorkflow({ customer, choices, senderName, canEdit }: { custo
         {customer.requestType === 'SPECIAL' && (
           <p className="text-xs text-muted-foreground">Special Request: the customer meets the VA first, so the contract and payment are confirmed after the Customer Success Handoff.</p>
         )}
+        {canEdit && customer.requestType === 'REGULAR' && formSubmitted && phase !== 'CONTRACT_BILLING_INITIATION' && phase !== 'NEW_CUSTOMER_ONBOARDED' && (
+          <p className="text-xs text-muted-foreground">A Special Request can only be chosen in Contract &amp; Billing Initiation, before the contract is sent.</p>
+        )}
       </section>
+
+      {intake}
 
       {formSubmitted && (
         <section className="space-y-4 rounded-2xl border bg-card p-6">

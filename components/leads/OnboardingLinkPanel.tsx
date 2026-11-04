@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { Check, Copy, Link2, Loader2, Mail, RefreshCw } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, Copy, Link2, Loader2, Mail, RefreshCw } from 'lucide-react'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { createOnboardingLink } from '@/app/(lms)/leads/actions'
 import { manilaDate, manilaDateTime } from '@/lib/customer-fields'
@@ -39,21 +39,28 @@ export function OnboardingLinkPanel({
   customerEmail,
   link,
   hadLinks,
+  collapsible = false,
 }: {
   customerId: string
   customerEmail: string | null
   link: LinkInfo | null
   hadLinks: boolean
+  // Lead Management: once a link has been sent, the panel folds to one line
+  // until someone opens it. It stays open right after a link is made, so it
+  // can be copied.
+  collapsible?: boolean
 }) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [confirmNew, setConfirmNew] = useState(false)
+  const [open, setOpen] = useState(!collapsible || !link)
 
   const create = () =>
     start(async () => {
       const result = await createOnboardingLink(customerId)
       if (!result.ok) return void toast.error(result.error)
       setConfirmNew(false)
+      setOpen(true)
       toast.success('Onboarding link ready.')
       router.refresh()
     })
@@ -74,9 +81,32 @@ export function OnboardingLinkPanel({
   }
 
   const mailto = `mailto:${encodeURIComponent(customerEmail ?? '')}?subject=${encodeURIComponent(link.email.subject)}&body=${encodeURIComponent(link.email.body)}`
+  const status = `Sent ${new Date(link.createdAt).toLocaleDateString('en-PH', manilaDate)} · valid until ${new Date(link.expiresAt).toLocaleDateString('en-PH', manilaDate)} · ${
+    link.openedAt ? `opened ${new Date(link.openedAt).toLocaleString('en-PH', manilaDateTime)}` : 'not opened yet'
+  }`
+
+  if (!open)
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card px-5 py-3">
+        <p className="text-sm text-muted-foreground">{status}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <CopyButton text={link.url} label="Copy link" />
+          <Button size="sm" variant="ghost" onClick={() => setOpen(true)} aria-expanded={false}>
+            <ChevronDown /> Show link and email
+          </Button>
+        </div>
+      </div>
+    )
 
   return (
     <div className="space-y-4 rounded-xl border bg-card p-5">
+      {collapsible && (
+        <div className="-mb-1 flex justify-end">
+          <Button size="sm" variant="ghost" onClick={() => setOpen(false)} aria-expanded>
+            <ChevronUp /> Hide
+          </Button>
+        </div>
+      )}
       <div className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-medium">Link</p>

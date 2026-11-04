@@ -134,8 +134,6 @@ export async function setRequestGroup(requestId: string, group: string): Promise
 // Each action changes one fact and lets syncLeadPhase move the phase, in
 // the same transaction as the change and its activity log.
 
-const BEFORE_CONFIRMATION: LeadPhase[] = ['CONTRACT_BILLING_INITIATION', 'CONTRACT_PAYMENT_CONFIRMATION', 'CUSTOMER_SUCCESS_HANDOFF']
-
 // Contract & Billing Initiation: which contract applies to the lead's
 // account. This is the account's own contract (accounts.contract_id), the
 // same one Customer Management shows.
@@ -202,7 +200,10 @@ export async function markContractSent(customerId: string): Promise<ActionResult
 
 // Regular ↔ Special Request. A Special Request (the customer meets the VA
 // first, approved by the CEO outside the app) goes to Customer Success
-// Handoff now and has its contract and payment confirmed afterwards.
+// Handoff now and has its contract and payment confirmed afterwards. It is
+// chosen in Contract & Billing Initiation only (before the contract goes
+// out); a Special Request can go back to Regular while it waits in Customer
+// Success Handoff.
 export async function setLeadRequestType(customerId: string, requestType: string): Promise<ActionResult<{ phase: LeadPhase }>> {
   const actor = await getActorFor('leads', 'update')
   if (!actor) return { ok: false, error: NO_ACCESS }
@@ -212,7 +213,10 @@ export async function setLeadRequestType(customerId: string, requestType: string
   if (!lead) return { ok: false, error: 'That lead no longer exists.' }
   if (lead.requestType === type) return { ok: true, data: { phase: lead.leadPhase } }
   if (lead.handoffCompletedAt) return { ok: false, error: 'The customer has already been onboarded by the CS team, so the request type can’t change.' }
-  if (!BEFORE_CONFIRMATION.includes(lead.leadPhase)) return { ok: false, error: `The request type is set after the onboarding form, not in ${PHASE_LABELS[lead.leadPhase]}.` }
+  if (type === 'SPECIAL' && lead.leadPhase !== 'CONTRACT_BILLING_INITIATION')
+    return { ok: false, error: `A Special Request can only be chosen in ${PHASE_LABELS.CONTRACT_BILLING_INITIATION}, not in ${PHASE_LABELS[lead.leadPhase]}.` }
+  if (type === 'REGULAR' && lead.leadPhase !== 'CUSTOMER_SUCCESS_HANDOFF')
+    return { ok: false, error: `A Special Request can only go back to Regular in ${PHASE_LABELS.CUSTOMER_SUCCESS_HANDOFF}, not in ${PHASE_LABELS[lead.leadPhase]}.` }
 
   const phase = await prisma.$transaction(async (tx) => {
     await tx.customer.update({ where: { id: customerId }, data: { requestType: type } })
