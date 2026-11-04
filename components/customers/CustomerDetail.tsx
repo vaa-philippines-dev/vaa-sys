@@ -10,6 +10,8 @@ import { OnboardingStepper } from '@/components/lms/OnboardingStepper'
 import { STAGE_META, initialsFrom } from '@/components/lms/stage-meta'
 import { STATUS_META } from '@/components/cms/status-meta'
 import { StatusRibbon } from '@/components/cms/StatusRibbon'
+import { HandoffButton } from '@/components/customers/HandoffButton'
+import { PHASE_LABELS } from '@/lib/lead-phase-fields'
 import { cn } from '@/lib/utils'
 import { canUse, type AccessRole } from '@/lib/access-fields'
 import { STATUS_LABELS, WARNING_LABELS, dayString, isTerminal, manilaDate, manilaDateTime, type CustomerWarning } from '@/lib/customer-fields'
@@ -23,6 +25,9 @@ type Customer = NonNullable<Awaited<ReturnType<typeof getCustomer>>>
 // What Customer Management adds to the page, worked out on the server.
 export type CustomerCmsData = {
   canEdit: boolean
+  // Customer Success Handoff: the CS Manager or the customer's own CS
+  // Specialist (customers.update within scope).
+  canHandoff: boolean
   canAssign: boolean
   canReview: boolean
   reviewed: boolean
@@ -43,12 +48,15 @@ export function CustomerDetail({
   senderName,
   from,
   cms,
+  workflow,
 }: {
   customer: Customer
   role: AccessRole
   senderName: string
   from: 'customers' | 'leads'
   cms?: CustomerCmsData
+  // Lead Management's workflow panel (components/leads/LeadWorkflow.tsx).
+  workflow?: React.ReactNode
 }) {
   const now = new Date()
   const liveLink = customer.onboardingLinks.find((l) => !l.revokedAt && !l.submittedAt && l.expiresAt > now) ?? null
@@ -101,6 +109,7 @@ export function CustomerDetail({
             openedAt={firstDate(customer.onboardingLinks.map((l) => l.openedAt))}
             submittedAt={latestSubmission?.submittedAt ?? null}
           />
+          {workflow}
         </>
       ) : (
         /* Customer Management: name and status up front, then the ribbon of
@@ -117,10 +126,22 @@ export function CustomerDetail({
               <span className={cn('inline-flex h-7 items-center rounded-full px-3 text-sm font-medium', STATUS_META[customer.status].soft)}>{STATUS_META[customer.status].label}</span>
               <p className="text-xs text-muted-foreground">
                 since {customer.statusChangedAt.toLocaleDateString('en-PH', manilaDate)}
-                {customer.status === 'PENDING' && ` · ${STAGE_META[customer.stage].label.toLowerCase()}`}
+                {customer.status === 'PENDING' &&
+                  ` · ${customer.leadPhase === 'CUSTOMER_INTAKE' ? STAGE_META[customer.stage].label.toLowerCase() : PHASE_LABELS[customer.leadPhase]}`}
+                {customer.requestType === 'SPECIAL' && ' · Special Request'}
               </p>
             </div>
           </div>
+          {customer.leadPhase === 'CUSTOMER_SUCCESS_HANDOFF' && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-sm">
+              <p>
+                <span className="font-medium">Customer Success Handoff.</span> Lead Management handed this customer over
+                {customer.requestType === 'SPECIAL' ? ' as a Special Request (meet the VA first)' : ' with the contract and first payment confirmed'}. Onboard them officially,
+                then mark it done.
+              </p>
+              {cms?.canHandoff && <HandoffButton customerId={customer.id} special={customer.requestType === 'SPECIAL'} />}
+            </div>
+          )}
           {customer.reviewAction && customer.statusBeforeReview && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
               <p className="flex items-start gap-2">

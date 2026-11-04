@@ -7,6 +7,7 @@ import { logActivity, fieldChanges } from '@/lib/activity'
 import { assertCustomerInScope } from '@/lib/scope'
 import { changeCustomerStatus as applyCustomerStatus, StatusError } from '@/lib/status'
 import { isCsTeamMember } from '@/lib/specialists'
+import { syncLeadPhase } from '@/lib/lead-phase'
 import { customerEditSchema, dateOnly, dayString, noteSchema, statusChangeSchema, type ActionResult, type CustomerEditInput, type StatusChangeInput } from '@/lib/customer-fields'
 
 const NO_ACCESS = "You don't have permission to change this customer."
@@ -93,6 +94,28 @@ export async function assignSpecialist(customerId: string, email: string): Promi
   })
   refresh(customerId)
   revalidatePath('/specialists')
+  return { ok: true, data: null }
+}
+
+// Customer Success Handoff done: the CS Manager or the customer's own CS
+// Specialist onboarded the customer officially. The lead becomes New
+// Customer Onboarded, or, for a Special Request whose contract and payment
+// aren't confirmed yet, moves on to Contract & Payment Confirmation.
+export async function completeHandoff(customerId: string): Promise<ActionResult> {
+  const actor = await getActorFor('customers', 'update')
+  if (!actor || !(await assertCustomerInScope(actor, customerId))) return { ok: false, error: NO_ACCESS }
+  const customer = await prisma.customer.findUnique({ where: { id: customerId }, select: { name: true, leadPhase: true } })
+  if (!customer) return { ok: false, error: 'That customer no longer exists.' }
+  if (customer.leadPhase !== 'CUSTOMER_SUCCESS_HANDOFF') return { ok: false, error: 'This customer isn’t waiting for the Customer Success handoff.' }
+
+  const now = new Date()
+  await prisma.$transaction(async (tx) => {
+    await tx.customer.update({ where: { id: customerId }, data: { handoffCompletedAt: now, handoffCompletedByEmail: actor.email.toLowerCase() } })
+    await logActivity(tx, actor, { entityType: 'Customer', entityId: customerId, entityLabel: customer.name, customerId, action: 'HANDOFF_COMPLETED' })
+    await syncLeadPhase(tx, actor, customerId, 'Onboarded by the CS team', now)
+  })
+  refresh(customerId)
+  revalidatePath(`/leads/${customerId}`)
   return { ok: true, data: null }
 }
 

@@ -26,6 +26,11 @@ export const ACTIVITY_ACTIONS = [
   'TAKEOVER_CANCELLED',
   'NOTE',
   'CONTRACT_ASSIGNED',
+  'PHASE_CHANGE',
+  'CONTRACT_SENT',
+  'CONTRACT_CONFIRMED',
+  'REQUEST_TYPE_CHANGED',
+  'HANDOFF_COMPLETED',
 ] as const
 
 export const ACTION_LABELS: Record<string, string> = {
@@ -50,6 +55,11 @@ export const ACTION_LABELS: Record<string, string> = {
   TAKEOVER_CANCELLED: 'Takeover cancelled',
   NOTE: 'Note added',
   CONTRACT_ASSIGNED: 'Contract assigned',
+  PHASE_CHANGE: 'Lead phase changed',
+  CONTRACT_SENT: 'Contract sent',
+  CONTRACT_CONFIRMED: 'Contract and payment confirmed',
+  REQUEST_TYPE_CHANGED: 'Request type changed',
+  HANDOFF_COMPLETED: 'Customer onboarded',
 }
 
 const TERMINAL = ['TERMINATED', 'CANCELLED']

@@ -38,6 +38,8 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
         from="customers"
         cms={{
           canEdit: can(user.role, 'customers', 'update'),
+          // In scope already (checked above), so a CS Specialist only reaches their own customers.
+          canHandoff: can(user.role, 'customers', 'update'),
           canAssign,
           canReview: can(user.role, 'approvals', 'update'),
           reviewed: needsStatusReview(user.role),

@@ -9,6 +9,12 @@ import type { ActionResult } from '@/lib/customer-fields'
 
 const NO_ACCESS = "You don't have permission to manage contracts."
 
+// One contract database, shown in both areas.
+function refresh() {
+  revalidatePath('/contracts')
+  revalidatePath('/leads/contracts')
+}
+
 // Contract codes keep the legacy format, CON-001, CON-002…
 async function nextContractCode(): Promise<string> {
   const codes = await prisma.contract.findMany({ select: { contractCode: true } })
@@ -33,7 +39,9 @@ export async function saveContract(id: string | null, input: ContractInput): Pro
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const saved = await prisma.$transaction(async (tx) => {
-        const before = id ? await tx.contract.findUnique({ where: { id }, select: { name: true, description: true, period: true, notes: true, sections: { select: { sectionDefId: true, value: true } } } }) : null
+        const before = id
+          ? await tx.contract.findUnique({ where: { id }, select: { name: true, description: true, period: true, templateUrl: true, notes: true, sections: { select: { sectionDefId: true, value: true } } } })
+          : null
         if (id && !before) throw new Error('missing')
         const contract = id
           ? await tx.contract.update({ where: { id }, data: { ...fields, updatedByEmail: email } })
@@ -62,7 +70,7 @@ export async function saveContract(id: string | null, input: ContractInput): Pro
         }
         return contract
       })
-      revalidatePath('/contracts')
+      refresh()
       return { ok: true, data: { id: saved.id } }
     } catch (err) {
       if (err instanceof Error && err.message === 'missing') return { ok: false, error: 'That contract no longer exists.' }
@@ -83,7 +91,7 @@ export async function setContractActive(id: string, isActive: boolean): Promise<
     await tx.contract.update({ where: { id }, data: { isActive, updatedByEmail: actor.email.toLowerCase() } })
     await logActivity(tx, actor, { entityType: 'Contract', entityId: id, entityLabel: `${contract.name} (${contract.contractCode})`, action: 'UPDATE', field: 'isActive', oldValue: contract.isActive, newValue: isActive })
   })
-  revalidatePath('/contracts')
+  refresh()
   return { ok: true, data: null }
 }
 
@@ -97,7 +105,7 @@ export async function addSectionDef(input: SectionDefInput): Promise<ActionResul
     const def = await tx.contractSectionDef.create({ data: { ...parsed.data, sortOrder: count + 1, createdByEmail: actor.email.toLowerCase() } })
     await logActivity(tx, actor, { entityType: 'ContractSection', entityId: def.id, entityLabel: def.name, action: 'CREATE', newValue: FIELD_TYPE_LABELS[def.fieldType] })
   })
-  revalidatePath('/contracts')
+  refresh()
   return { ok: true, data: null }
 }
 
@@ -111,6 +119,6 @@ export async function setSectionDefActive(id: string, isActive: boolean): Promis
     await tx.contractSectionDef.update({ where: { id }, data: { isActive } })
     await logActivity(tx, actor, { entityType: 'ContractSection', entityId: id, entityLabel: def.name, action: 'UPDATE', field: 'isActive', oldValue: def.isActive, newValue: isActive })
   })
-  revalidatePath('/contracts')
+  refresh()
   return { ok: true, data: null }
 }

@@ -84,10 +84,12 @@ export async function customerPortfolio(now: Date, scope: Prisma.CustomerWhereIn
   return { accounts, vasRequested: vas._sum.numberOfVas ?? 0, changesThisWeek, recent }
 }
 
-// Lead Management's list: customers still in onboarding (status Pending).
+// Lead Management's list: customers still in onboarding (status Pending)
+// that the CS team hasn't onboarded yet (lead phase before New Customer
+// Onboarded).
 export async function listLeads(q?: string) {
   const { rows } = await listCustomers({ q, status: 'PENDING' })
-  return rows
+  return rows.filter((r) => r.leadPhase !== 'NEW_CUSTOMER_ONBOARDED')
 }
 
 export async function getCustomer(id: string) {
@@ -95,6 +97,8 @@ export async function getCustomer(id: string) {
     where: { id },
     include: {
       statusLogs: { orderBy: { changedAt: 'desc' }, include: { terminationReason: { select: { label: true } } } },
+      phaseLogs: { orderBy: { changedAt: 'desc' } },
+      contractSent: { select: { contractCode: true, name: true } },
       onboardingLinks: { orderBy: { createdAt: 'desc' } },
       submissions: { orderBy: { submittedAt: 'desc' }, select: { id: true, submittedAt: true } },
       takeovers: { where: { cancelledAt: null }, orderBy: { startDate: 'desc' } },

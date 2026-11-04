@@ -78,8 +78,11 @@ const GRID: Record<Module, Partial<Record<AccessRole, Grant>>> = {
   csSpecialists: { CS_MANAGER: CRUD, CUSTOMER_SPECIALIST: R },
   // Confirm or cancel a pending status change.
   approvals: { CS_MANAGER: CRUD },
-  // Contract templates. Picking an account's contract is an accounts update.
-  contracts: { CS_MANAGER: CRUD, CUSTOMER_SPECIALIST: R, ACCOUNTING: R, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
+  // Contract templates, one database for both areas (Customer Management's
+  // /contracts and Lead Management's /leads/contracts). Picking an account's
+  // contract is an accounts update, or a leads update for a lead's account
+  // in Contract & Billing Initiation.
+  contracts: { CS_MANAGER: CRUD, LEAD_MANAGER: CRU, CUSTOMER_SPECIALIST: R, ACCOUNTING: R, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
   settings: {},
   activityLogs: { CS_MANAGER: R, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
   // CS Managers only grant the Customer Specialist role (grantableRoles).

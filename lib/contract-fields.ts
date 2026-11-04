@@ -41,6 +41,13 @@ export const contractSchema = z.object({
     .max(2000)
     .transform((v) => (v === '' ? null : v)),
   period: z.enum(CONTRACT_PERIODS),
+  // The template sent to leads, as a Google Drive / Docs link.
+  templateUrl: z
+    .string()
+    .trim()
+    .max(1000)
+    .refine((v) => v === '' || /^https?:\/\/\S+$/i.test(v), 'Enter the template link, starting with https://.')
+    .transform((v) => (v === '' ? null : v)),
   notes: z
     .string()
     .trim()

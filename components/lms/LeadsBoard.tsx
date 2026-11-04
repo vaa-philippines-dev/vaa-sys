@@ -6,8 +6,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Plus, Search, X } from 'lucide-react'
 import { NewLeadForm } from '@/components/leads/NewLeadForm'
-import { STAGE_COLUMNS, STAGE_META, initialsFrom } from '@/components/lms/stage-meta'
-import type { OnboardingStage } from '@/lib/customer-fields'
+import { BOARD_COLUMNS, COLUMN_META, initialsFrom, type BoardColumn } from '@/components/lms/stage-meta'
 import { cn } from '@/lib/utils'
 
 export type BoardLead = {
@@ -15,13 +14,15 @@ export type BoardLead = {
   name: string
   code: string
   email: string | null
-  stage: OnboardingStage
+  column: BoardColumn
+  special: boolean
   day: number
 }
 
-// The LMS Kanban board, with onboarding stages as its columns, plus the
-// right-hand "New lead" drawer.
-export function LeadsBoard({ leads, stage, openNew }: { leads: BoardLead[]; stage: OnboardingStage | null; openNew: boolean }) {
+// The LMS Kanban board: Customer Intake's stages, then the workflow phases
+// after the form (lib/lead-phase-fields.ts), plus the right-hand "New lead"
+// drawer. `stage` in the URL names a column.
+export function LeadsBoard({ leads, column: stage, openNew }: { leads: BoardLead[]; column: BoardColumn | null; openNew: boolean }) {
   const router = useRouter()
   const [query, setQuery] = useState('')
   const [drawerOpen, setDrawerOpen] = useState(openNew)
@@ -43,8 +44,8 @@ export function LeadsBoard({ leads, stage, openNew }: { leads: BoardLead[]; stag
     return q ? leads.filter((l) => `${l.name} ${l.code} ${l.email ?? ''}`.toLowerCase().includes(q)) : leads
   }, [leads, query])
 
-  const columns = stage ? [stage] : STAGE_COLUMNS
-  const submitted = leads.filter((l) => l.stage === 'SUBMITTED').length
+  const columns = stage ? [stage] : BOARD_COLUMNS
+  const submitted = leads.filter((l) => COLUMN_META[l.column].phase !== 'CUSTOMER_INTAKE').length
 
   return (
     <>
@@ -55,7 +56,7 @@ export function LeadsBoard({ leads, stage, openNew }: { leads: BoardLead[]; stag
           </div>
           <div>
             <h1 className="flex items-center gap-2 text-2xl font-semibold">
-              {stage ? STAGE_META[stage].label : 'Leads'}
+              {stage ? COLUMN_META[stage].label : 'Leads'}
               {stage && (
                 <Link href="/leads" className="rounded-full p-1 text-muted-foreground hover:bg-muted" title="Show all stages" aria-label="Show all stages">
                   <X className="h-3.5 w-3.5" />
@@ -97,8 +98,8 @@ export function LeadsBoard({ leads, stage, openNew }: { leads: BoardLead[]; stag
       ) : (
         <div className="no-scrollbar flex flex-1 gap-6 overflow-x-auto pb-2">
           {columns.map((s) => {
-            const meta = STAGE_META[s]
-            const columnLeads = filtered.filter((l) => l.stage === s)
+            const meta = COLUMN_META[s]
+            const columnLeads = filtered.filter((l) => l.column === s)
             return (
               <section key={s} aria-label={meta.label} className="flex w-[268px] shrink-0 flex-col gap-3">
                 <h2 className="flex items-center gap-1.5 px-0.5 text-[13px] font-medium">
@@ -112,7 +113,10 @@ export function LeadsBoard({ leads, stage, openNew }: { leads: BoardLead[]; stag
                       <span className="truncate pr-4 text-[13.5px] font-medium">{l.name}</span>
                       <p className="truncate text-[12.5px] text-muted-foreground">{l.email || 'No email yet'}</p>
                       <div className="flex items-center justify-between pt-0.5 text-[11.5px] text-muted-foreground">
-                        <span>Day {l.day}</span>
+                        <span>
+                          Day {l.day}
+                          {l.special && <span className="ml-2 rounded-full bg-warning/15 px-1.5 py-0.5 text-[10.5px] font-medium text-warning">Special Request</span>}
+                        </span>
                         <span className="font-mono">{l.code}</span>
                       </div>
                       <span
