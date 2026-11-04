@@ -2,24 +2,28 @@
 
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
-import { ChartColumn, Plus, Settings, Users } from 'lucide-react'
-import { STAGE_COLUMNS, STAGE_META } from '@/components/lms/stage-meta'
-import type { OnboardingStage } from '@/lib/customer-fields'
+import { ChartColumn, FileSignature, Plus, Settings, Users } from 'lucide-react'
+import { BOARD_COLUMNS, COLUMN_META, type BoardColumn } from '@/components/lms/stage-meta'
+import { PHASE_LABELS } from '@/lib/lead-phase-fields'
 import { cn } from '@/lib/utils'
 
-// The LMS sidebar's nav: the board as the main item, onboarding stages as
-// "Views" (each a filter on the board, with its live count). People who only
-// have Lead reports (board false) see just the Reports item.
+// The LMS sidebar's nav: the board as the main item, its columns as "Views"
+// (each a filter on the board, with its live count), grouped by phase:
+// Customer Intake's stages, then the phases after the form. Contracts sits
+// with Contract & Billing. People who only have Lead reports (board false)
+// see just the Reports item.
 export function LmsNav({
   total,
-  byStage,
+  byColumn,
   board,
+  showContracts,
   showReports,
   showSettings,
 }: {
   total: number
-  byStage: Record<OnboardingStage, number>
+  byColumn: Record<BoardColumn, number>
   board: boolean
+  showContracts?: boolean
   showReports?: boolean
   showSettings?: boolean
 }) {
@@ -27,6 +31,8 @@ export function LmsNav({
   const searchParams = useSearchParams()
   const onBoard = pathname === '/leads'
   const stage = onBoard ? searchParams.get('stage') : null
+  const intake = BOARD_COLUMNS.filter((c) => COLUMN_META[c].phase === 'CUSTOMER_INTAKE')
+  const later = BOARD_COLUMNS.filter((c) => COLUMN_META[c].phase !== 'CUSTOMER_INTAKE')
 
   const reportsLink = showReports && (
     <Link
@@ -84,22 +90,48 @@ export function LmsNav({
       </nav>
 
       <div className="flex flex-col gap-0.5">
-        <p className="px-2.5 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Views</p>
-        {STAGE_COLUMNS.map((s) => (
-          <Link
-            key={s}
-            href={`/leads?stage=${s}`}
-            className={cn(
-              'flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px]',
-              stage === s ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+        <p className="px-2.5 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{PHASE_LABELS.CUSTOMER_INTAKE}</p>
+        {intake.map((c) => (
+          <ViewLink key={c} column={c} active={stage === c} count={byColumn[c]} />
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-0.5">
+        <p className="px-2.5 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">After the form</p>
+        {later.map((c) => (
+          <div key={c} className="contents">
+            <ViewLink column={c} active={stage === c} count={byColumn[c]} />
+            {c === 'CONTRACT_BILLING_INITIATION' && showContracts && (
+              <Link
+                href="/leads/contracts"
+                className={cn(
+                  'ml-4 flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px]',
+                  pathname === '/leads/contracts' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                )}
+              >
+                <FileSignature className="h-3.5 w-3.5" strokeWidth={1.75} />
+                Contracts
+              </Link>
             )}
-          >
-            <span className={cn('h-1.5 w-1.5 rounded-full', STAGE_META[s].dot)} />
-            {STAGE_META[s].label}
-            <span className="ml-auto text-xs tabular-nums text-muted-foreground">{byStage[s]}</span>
-          </Link>
+          </div>
         ))}
       </div>
     </div>
+  )
+}
+
+function ViewLink({ column, active, count }: { column: BoardColumn; active: boolean; count: number }) {
+  const meta = COLUMN_META[column]
+  return (
+    <Link
+      href={`/leads?stage=${column}`}
+      className={cn('flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px]', active ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}
+    >
+      <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', meta.dot)} />
+      <span className="min-w-0 truncate" title={meta.label}>
+        {meta.label}
+      </span>
+      <span className="ml-auto text-xs tabular-nums text-muted-foreground">{count}</span>
+    </Link>
   )
 }

@@ -133,6 +133,28 @@ enum CustomerStatus {
   @@schema("vaa_sys")
 }
 
+// Where a lead is in Lead Management's workflow (lib/lead-phase.ts). Worked
+// out from the facts on the customer, never picked by hand.
+enum LeadPhase {
+  CUSTOMER_INTAKE
+  CONTRACT_BILLING_INITIATION
+  CONTRACT_PAYMENT_CONFIRMATION
+  CUSTOMER_SUCCESS_HANDOFF
+  NEW_CUSTOMER_ONBOARDED
+
+  @@schema("vaa_sys")
+}
+
+// A Special Request (the customer meets the VA first, approved by the CEO)
+// goes to Customer Success Handoff before the contract and payment are
+// confirmed.
+enum LeadRequestType {
+  REGULAR
+  SPECIAL
+
+  @@schema("vaa_sys")
+}
+
 // A lead is a customer that hasn't finished onboarding yet: Lead Management
 // creates the row (status PENDING) and Customer Management takes it from
 // there. customerCode keeps the legacy CMS format (CUST_ + 12 hex).
@@ -165,7 +187,28 @@ model Customer {
   createdAt               DateTime        @default(now()) @map("created_at")
   updatedAt               DateTime        @updatedAt @map("updated_at")
 
+  // Lead workflow (lib/lead-phase.ts). leadPhase is a cache of the phase the
+  // facts below (and the onboarding form) add up to; every change of it is
+  // in lead_phase_logs.
+  leadPhase                LeadPhase       @default(CUSTOMER_INTAKE) @map("lead_phase")
+  leadPhaseChangedAt       DateTime        @default(now()) @map("lead_phase_changed_at")
+  requestType              LeadRequestType @default(REGULAR) @map("request_type")
+  // The contract email sent to the lead, and which contract it was for.
+  contractSentAt           DateTime?       @map("contract_sent_at")
+  contractSentByEmail      String?         @map("contract_sent_by_email")
+  contractSentId           String?         @map("contract_sent_id")
+  contractSent             Contract?       @relation("ContractSent", fields: [contractSentId], references: [id], onDelete: SetNull)
+  // Contract & Payment Confirmation: the signed contract and the first
+  // payment (paymentDate above) confirmed.
+  contractSignedOn         DateTime?       @map("contract_signed_on") @db.Date
+  contractConfirmedAt      DateTime?       @map("contract_confirmed_at")
+  contractConfirmedByEmail String?         @map("contract_confirmed_by_email")
+  // Customer Success Handoff: the CS team onboarded the customer officially.
+  handoffCompletedAt       DateTime?       @map("handoff_completed_at")
+  handoffCompletedByEmail  String?         @map("handoff_completed_by_email")
+
   statusLogs      CustomerStatusLog[]
+  phaseLogs       LeadPhaseLog[]
   onboardingLinks OnboardingLink[]
   submissions     OnboardingSubmission[]
   accounts        Account[]
@@ -176,7 +219,26 @@ model Customer {
   @@index([name])
   @@index([status])
   @@index([assignedSpecialistEmail])
+  @@index([leadPhase])
   @@map("customers")
+  @@schema("vaa_sys")
+}
+
+// Every change of a lead's phase, including the first move out of Customer
+// Intake (fromPhase is never null: every lead starts in Customer Intake).
+model LeadPhaseLog {
+  id             String    @id @default(cuid())
+  customerId     String    @map("customer_id")
+  customer       Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  fromPhase      LeadPhase @map("from_phase")
+  toPhase        LeadPhase @map("to_phase")
+  // What moved it, e.g. "Contract sent", "Switched to Special Request".
+  note           String?
+  changedByEmail String    @map("changed_by_email")
+  changedAt      DateTime  @default(now()) @map("changed_at")
+
+  @@index([customerId, changedAt])
+  @@map("lead_phase_logs")
   @@schema("vaa_sys")
 }
 
@@ -467,6 +529,8 @@ model Contract {
   period         String   @default("Annual")
   isActive       Boolean  @default(true) @map("is_active")
   notes          String?
+  // The template sent to leads: a Google Drive / Docs link.
+  templateUrl    String?  @map("template_url")
   createdByEmail String   @map("created_by_email")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedByEmail String?  @map("updated_by_email")
@@ -474,6 +538,10 @@ model Contract {
 
   sections ContractSection[]
   accounts Account[]
+  // MODULE 2: some older VA connections follow a contract other than their
+  // account's. Add contract_id to va_connections (null = the account's)
+  // when that table exists.
+  sentToCustomers Customer[] @relation("ContractSent")
 
   @@map("contracts")
   @@schema("vaa_sys")

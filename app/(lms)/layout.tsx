@@ -6,13 +6,12 @@ import { SignOutButton } from '@/components/layout/SignOutButton'
 import { LmsNav } from '@/components/lms/LmsNav'
 import { SystemSwitcher } from '@/components/lms/SystemSwitcher'
 import { EXTERNAL_SYSTEMS, type SystemLink } from '@/components/lms/systems'
-import { STAGE_COLUMNS, initialsFrom } from '@/components/lms/stage-meta'
+import { BOARD_COLUMNS, boardColumnOf, initialsFrom, type BoardColumn } from '@/components/lms/stage-meta'
 import { redirect } from 'next/navigation'
 import { requireSignedIn, displayName } from '@/lib/auth'
 import { canUse, homeFor, ROLE_LABELS } from '@/lib/access-fields'
 import { can } from '@/lib/permissions'
 import { listLeads } from '@/lib/customers'
-import type { OnboardingStage } from '@/lib/customer-fields'
 
 // Lead Management keeps the original lead-management-sys design: sidebar
 // layout and the .lms palette (app/globals.css). Everything else in vaa-sys
@@ -29,7 +28,8 @@ export default async function LmsLayout({ children }: { children: React.ReactNod
   const home = board ? '/leads' : '/leads/reports'
 
   const leads = board ? await listLeads() : []
-  const byStage = Object.fromEntries(STAGE_COLUMNS.map((s) => [s, leads.filter((l) => l.stage === s).length])) as Record<OnboardingStage, number>
+  const columns = leads.map((l) => boardColumnOf(l.stage, l.leadPhase))
+  const byColumn = Object.fromEntries(BOARD_COLUMNS.map((c) => [c, columns.filter((x) => x === c).length])) as Record<BoardColumn, number>
 
   const others: SystemLink[] = [
     ...(canUse(user.role, 'customers') ? [{ label: 'Customer Management', href: '/customers' }] : []),
@@ -50,7 +50,14 @@ export default async function LmsLayout({ children }: { children: React.ReactNod
             <SystemSwitcher current="Lead Management System" others={others} />
           </div>
           <Suspense>
-            <LmsNav total={leads.length} byStage={byStage} board={board} showReports={reports} showSettings={can(user.role, 'settings', 'update')} />
+            <LmsNav
+              total={leads.length}
+              byColumn={byColumn}
+              board={board}
+              showContracts={can(user.role, 'contracts')}
+              showReports={reports}
+              showSettings={can(user.role, 'settings', 'update')}
+            />
           </Suspense>
         </div>
 

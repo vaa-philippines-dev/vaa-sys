@@ -3,13 +3,41 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
-import { getActor } from '@/lib/auth'
+import { getActor, getActorFor } from '@/lib/auth'
+import { fieldChanges, logActivity } from '@/lib/activity'
 import { findCustomerMatches, generateCustomerCode } from '@/lib/customers'
+import { syncLeadPhase } from '@/lib/lead-phase'
 import { linkExpiry, newLinkToken } from '@/lib/onboarding'
-import { newLeadSchema, type ActionResult, type CustomerMatch, type NewLeadInput } from '@/lib/customer-fields'
+import { dateOnly, manilaToday, newLeadSchema, type ActionResult, type CustomerMatch, type NewLeadInput } from '@/lib/customer-fields'
+import { confirmContractSchema, PHASE_LABELS, REQUEST_TYPES, REQUEST_TYPE_LABELS, type ConfirmContractInput, type LeadPhase, type LeadRequestType } from '@/lib/lead-phase-fields'
 import { REQUEST_GROUPS, type RequestGroup } from '@/lib/onboarding-fields'
 
 const NO_ACCESS = "You don't have permission to use Lead Management."
+
+function refreshLead(customerId: string) {
+  revalidatePath('/leads')
+  revalidatePath(`/leads/${customerId}`)
+  revalidatePath(`/customers/${customerId}`)
+}
+
+// The lead's workflow facts, and the account its contract is picked for:
+// the one made from the onboarding form.
+async function leadForWorkflow(customerId: string) {
+  return prisma.customer.findUnique({
+    where: { id: customerId },
+    select: {
+      name: true,
+      leadPhase: true,
+      requestType: true,
+      contractSentAt: true,
+      contractConfirmedAt: true,
+      handoffCompletedAt: true,
+      paymentDate: true,
+      noPaymentYet: true,
+      submissions: { orderBy: { submittedAt: 'desc' }, take: 1, select: { account: { select: { id: true, name: true, accountCode: true, contractId: true } } } },
+    },
+  })
+}
 
 // A new lead is a customer in Pending status, with its first status log row.
 // On success it redirects to the lead's page from the server: a client-side
@@ -97,4 +125,139 @@ export async function setRequestGroup(requestId: string, group: string): Promise
   revalidatePath(`/leads/${request.ticket.customerId}`)
   revalidatePath(`/customers/${request.ticket.customerId}`)
   return { ok: true, data: null }
+}
+
+// ── Lead workflow (lib/lead-phase.ts) ─────────────────────────────
+// Each action changes one fact and lets syncLeadPhase move the phase, in
+// the same transaction as the change and its activity log.
+
+const BEFORE_CONFIRMATION: LeadPhase[] = ['CONTRACT_BILLING_INITIATION', 'CONTRACT_PAYMENT_CONFIRMATION', 'CUSTOMER_SUCCESS_HANDOFF']
+
+// Contract & Billing Initiation: which contract applies to the lead's
+// account. This is the account's own contract (accounts.contract_id), the
+// same one Customer Management shows.
+export async function setLeadContract(customerId: string, contractId: string): Promise<ActionResult> {
+  const actor = await getActorFor('leads', 'update')
+  if (!actor) return { ok: false, error: NO_ACCESS }
+  const lead = await leadForWorkflow(customerId)
+  if (!lead) return { ok: false, error: 'That lead no longer exists.' }
+  const account = lead.submissions[0]?.account
+  if (!account) return { ok: false, error: 'The contract is picked once the customer has submitted the onboarding form.' }
+  if (lead.contractConfirmedAt) return { ok: false, error: 'The contract is already confirmed. Change it on the account’s page in Customer Management.' }
+  const contract = contractId ? await prisma.contract.findUnique({ where: { id: contractId }, select: { id: true, isActive: true } }) : null
+  if (contractId && (!contract || !contract.isActive)) return { ok: false, error: 'Pick a contract from the list.' }
+  if ((account.contractId ?? '') === contractId) return { ok: true, data: null }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.account.update({ where: { id: account.id }, data: { contractId: contractId || null } })
+    const base = { entityType: 'Account', entityId: account.id, entityLabel: `${account.name} (${account.accountCode})`, customerId }
+    await logActivity(
+      tx,
+      actor,
+      fieldChanges(base, { contractId: account.contractId }, { contractId: contractId || null }).map((c) => ({ ...c, action: 'CONTRACT_ASSIGNED' }))
+    )
+  })
+  refreshLead(customerId)
+  return { ok: true, data: null }
+}
+
+// The Lead Manager sent the generated contract email. Sending it again
+// (say, after picking another contract) records the latest send.
+export async function markContractSent(customerId: string): Promise<ActionResult<{ phase: LeadPhase }>> {
+  const actor = await getActorFor('leads', 'update')
+  if (!actor) return { ok: false, error: NO_ACCESS }
+  const lead = await leadForWorkflow(customerId)
+  if (!lead) return { ok: false, error: 'That lead no longer exists.' }
+  const account = lead.submissions[0]?.account
+  if (!account) return { ok: false, error: 'The contract is sent once the customer has submitted the onboarding form.' }
+  if (!account.contractId) return { ok: false, error: 'Pick the contract first.' }
+  if (lead.contractConfirmedAt) return { ok: false, error: 'The contract is already confirmed.' }
+
+  const now = new Date()
+  const phase = await prisma.$transaction(async (tx) => {
+    const contract = await tx.contract.findUniqueOrThrow({ where: { id: account.contractId! }, select: { contractCode: true, name: true } })
+    await tx.customer.update({ where: { id: customerId }, data: { contractSentAt: now, contractSentByEmail: actor.email.toLowerCase(), contractSentId: account.contractId } })
+    await logActivity(tx, actor, {
+      entityType: 'Customer',
+      entityId: customerId,
+      entityLabel: lead.name,
+      customerId,
+      action: 'CONTRACT_SENT',
+      newValue: `${contract.name} (${contract.contractCode})`,
+    })
+    return syncLeadPhase(tx, actor, customerId, `Contract sent (${contract.contractCode})`, now)
+  })
+  refreshLead(customerId)
+  return { ok: true, data: { phase } }
+}
+
+// Regular ↔ Special Request. A Special Request (the customer meets the VA
+// first, approved by the CEO outside the app) goes to Customer Success
+// Handoff now and has its contract and payment confirmed afterwards.
+export async function setLeadRequestType(customerId: string, requestType: string): Promise<ActionResult<{ phase: LeadPhase }>> {
+  const actor = await getActorFor('leads', 'update')
+  if (!actor) return { ok: false, error: NO_ACCESS }
+  if (!REQUEST_TYPES.includes(requestType as LeadRequestType)) return { ok: false, error: 'Choose Regular Request or Special Request.' }
+  const type = requestType as LeadRequestType
+  const lead = await leadForWorkflow(customerId)
+  if (!lead) return { ok: false, error: 'That lead no longer exists.' }
+  if (lead.requestType === type) return { ok: true, data: { phase: lead.leadPhase } }
+  if (lead.handoffCompletedAt) return { ok: false, error: 'The customer has already been onboarded by the CS team, so the request type can’t change.' }
+  if (!BEFORE_CONFIRMATION.includes(lead.leadPhase)) return { ok: false, error: `The request type is set after the onboarding form, not in ${PHASE_LABELS[lead.leadPhase]}.` }
+
+  const phase = await prisma.$transaction(async (tx) => {
+    await tx.customer.update({ where: { id: customerId }, data: { requestType: type } })
+    await logActivity(tx, actor, {
+      entityType: 'Customer',
+      entityId: customerId,
+      entityLabel: lead.name,
+      customerId,
+      action: 'REQUEST_TYPE_CHANGED',
+      field: 'requestType',
+      oldValue: REQUEST_TYPE_LABELS[lead.requestType],
+      newValue: REQUEST_TYPE_LABELS[type],
+    })
+    return syncLeadPhase(tx, actor, customerId, `Switched to ${REQUEST_TYPE_LABELS[type]}`)
+  })
+  refreshLead(customerId)
+  return { ok: true, data: { phase } }
+}
+
+// Contract & Payment Confirmation: the customer signed and paid. The first
+// payment is the customer's own paymentDate, as on Customer Management.
+export async function confirmContractPayment(customerId: string, input: ConfirmContractInput): Promise<ActionResult<{ phase: LeadPhase }>> {
+  const actor = await getActorFor('leads', 'update')
+  if (!actor) return { ok: false, error: NO_ACCESS }
+  const parsed = confirmContractSchema.safeParse(input)
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Check the form.' }
+  const { signedOn, paymentDate } = parsed.data
+  const today = manilaToday()
+  if (signedOn > today || paymentDate > today) return { ok: false, error: 'The dates can’t be in the future.' }
+
+  const lead = await leadForWorkflow(customerId)
+  if (!lead) return { ok: false, error: 'That lead no longer exists.' }
+  if (!lead.contractSentAt) return { ok: false, error: 'Send the contract first.' }
+  if (lead.contractConfirmedAt) return { ok: false, error: 'The contract and payment are already confirmed.' }
+
+  const now = new Date()
+  const phase = await prisma.$transaction(async (tx) => {
+    await tx.customer.update({
+      where: { id: customerId },
+      data: {
+        contractSignedOn: dateOnly(signedOn),
+        contractConfirmedAt: now,
+        contractConfirmedByEmail: actor.email.toLowerCase(),
+        paymentDate: dateOnly(paymentDate),
+        noPaymentYet: false,
+      },
+    })
+    const base = { entityType: 'Customer', entityId: customerId, entityLabel: lead.name, customerId }
+    await logActivity(tx, actor, [
+      { ...base, action: 'CONTRACT_CONFIRMED', notes: `Signed ${signedOn}, first payment ${paymentDate}` },
+      ...fieldChanges(base, { noPaymentYet: lead.noPaymentYet, paymentDate: lead.paymentDate }, { noPaymentYet: false, paymentDate: dateOnly(paymentDate) }),
+    ])
+    return syncLeadPhase(tx, actor, customerId, 'Contract and payment confirmed', now)
+  })
+  refreshLead(customerId)
+  return { ok: true, data: { phase } }
 }

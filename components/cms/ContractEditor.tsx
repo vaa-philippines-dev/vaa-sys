@@ -13,7 +13,16 @@ import { addSectionDef, saveContract, setContractActive, setSectionDefActive } f
 import { CONTRACT_PERIODS, FIELD_TYPES, FIELD_TYPE_LABELS, type ContractFieldType } from '@/lib/contract-fields'
 
 type Def = { id: string; name: string; fieldType: ContractFieldType; description: string | null }
-type Contract = { id: string; name: string; description: string | null; period: string; notes: string | null; isActive: boolean; sections: Record<string, string> }
+type Contract = {
+  id: string
+  name: string
+  description: string | null
+  period: string
+  templateUrl: string | null
+  notes: string | null
+  isActive: boolean
+  sections: Record<string, string>
+}
 
 // New contract (no contract) or edit one, in a panel that opens in place.
 export function ContractEditor({ defs, contract }: { defs: Def[]; contract?: Contract }) {
@@ -22,6 +31,7 @@ export function ContractEditor({ defs, contract }: { defs: Def[]; contract?: Con
   const [name, setName] = useState(contract?.name ?? '')
   const [description, setDescription] = useState(contract?.description ?? '')
   const [period, setPeriod] = useState(contract?.period ?? 'Annual')
+  const [templateUrl, setTemplateUrl] = useState(contract?.templateUrl ?? '')
   const [notes, setNotes] = useState(contract?.notes ?? '')
   const [sections, setSections] = useState<Record<string, string>>(contract?.sections ?? {})
   const [error, setError] = useState<string | null>(null)
@@ -39,7 +49,7 @@ export function ContractEditor({ defs, contract }: { defs: Def[]; contract?: Con
       onSubmit={(e) => {
         e.preventDefault()
         start(async () => {
-          const result = await saveContract(contract?.id ?? null, { name, description, period: period as (typeof CONTRACT_PERIODS)[number], notes, sections })
+          const result = await saveContract(contract?.id ?? null, { name, description, period: period as (typeof CONTRACT_PERIODS)[number], templateUrl, notes, sections })
           if (!result.ok) return setError(result.error)
           setError(null)
           setOpen(false)
@@ -69,9 +79,22 @@ export function ContractEditor({ defs, contract }: { defs: Def[]; contract?: Con
         <Label htmlFor={`k-desc-${contract?.id ?? 'new'}`}>Description</Label>
         <Textarea id={`k-desc-${contract?.id ?? 'new'}`} value={description} onChange={(e) => setDescription(e.target.value)} disabled={pending} className="min-h-12" />
       </div>
+      <div className="space-y-1.5">
+        <Label htmlFor={`k-tpl-${contract?.id ?? 'new'}`}>
+          Template link <span className="font-normal text-muted-foreground">Google Drive or Docs, sent to leads</span>
+        </Label>
+        <Input
+          id={`k-tpl-${contract?.id ?? 'new'}`}
+          type="url"
+          value={templateUrl}
+          onChange={(e) => setTemplateUrl(e.target.value)}
+          placeholder="https://docs.google.com/…"
+          disabled={pending}
+        />
+      </div>
       {defs.length > 0 && (
         <fieldset className="grid gap-3 sm:grid-cols-2">
-          <legend className="mb-1 text-sm font-medium">Sections</legend>
+          <legend className="mb-1 text-sm font-medium">Terms</legend>
           {defs.map((d) => {
             const value = sections[d.id] ?? ''
             const set = (v: string) => setSections((s) => ({ ...s, [d.id]: v }))
@@ -179,8 +202,8 @@ export function SectionDefControls({ id, isActive }: { id?: string; isActive?: b
       className="flex flex-col gap-3 rounded-xl border bg-card p-4 sm:flex-row sm:items-end"
     >
       <div className="flex-1 space-y-1.5">
-        <Label htmlFor="sd-name">New section</Label>
-        <Input id="sd-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Late payment fee" required disabled={pending} />
+        <Label htmlFor="sd-name">New term</Label>
+        <Input id="sd-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Night differential amount" required disabled={pending} />
       </div>
       <div className="space-y-1.5 sm:w-40">
         <Label htmlFor="sd-type">Type</Label>
@@ -197,7 +220,7 @@ export function SectionDefControls({ id, isActive }: { id?: string; isActive?: b
         <Input id="sd-desc" value={description} onChange={(e) => setDescription(e.target.value)} disabled={pending} />
       </div>
       <Button type="submit" disabled={pending}>
-        {pending ? <Loader2 className="animate-spin" /> : <Plus />} Add section
+        {pending ? <Loader2 className="animate-spin" /> : <Plus />} Add term
       </Button>
     </form>
   )

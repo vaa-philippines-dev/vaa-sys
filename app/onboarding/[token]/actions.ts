@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { prisma } from '@/lib/prisma'
 import { findLink } from '@/lib/onboarding'
 import { generateAccountCode } from '@/lib/customers'
+import { syncLeadPhase } from '@/lib/lead-phase'
 import { firstIssue, nightDifferentialHours, onboardingSchemaFor, part3AnswersSchema, shiftHours, type OnboardingInput, type Part3Answers, type VaRequest } from '@/lib/onboarding-fields'
 import { getWorkHourMinimums } from '@/lib/settings'
 import type { ActionResult } from '@/lib/customer-fields'
@@ -127,6 +128,8 @@ export async function submitOnboarding(token: string, input: OnboardingInput): P
       await tx.onboardingLink.update({ where: { id: link.id }, data: { submittedAt: now } })
       // Keep the lead's email if Lead Management didn't have one yet.
       await tx.customer.updateMany({ where: { id: link.customerId, email: null }, data: { email: part1.primary.email.toLowerCase() } })
+      // Customer Intake → Contract & Billing Initiation (lib/lead-phase.ts).
+      await syncLeadPhase(tx, { email: 'onboarding-form' }, link.customerId, 'Onboarding form submitted', now)
     })
   } catch (err) {
     // A double click lands here: the link already has its one submission.

@@ -3,7 +3,7 @@
 One app with two areas on one database. It replaces the legacy Apps Script CMS step by step (Oct 21, 2026 meeting with Ian):
 
 - **Customer Management** (`/customers`) is for Customer Specialists and their manager: every customer, their status and its history.
-- **Lead Management** (`/leads`) is for the Lead Manager (Miss Mary): adding new customers and sending them their onboarding link. Its **Lead reports** (`/leads/reports`) are also open to CS Managers and Executives.
+- **Lead Management** (`/leads`) is for the Lead Manager (Miss Mary): adding new customers, sending them their onboarding link, then their contract, until the CS team takes them over (see [Lead phases](#lead-phases)). Its **Lead reports** (`/leads/reports`) are also open to CS Managers and Executives.
 - **Onboarding form** (`/onboarding/<token>`) is the public form a customer opens from that link. It asks the same questions as VAA's Google Form "CUSTOMER ONBOARDING FORM", in three parts:
   - **Part 1, customer profile:**
     - primary and secondary contacts with roles, and whether the primary contact is the focal person
@@ -51,7 +51,7 @@ The roles are the legacy CMS's. What each may do is one module × role map in `l
 | Service Manager (with a department) | `/customers` | all, view | | | | | | | |
 | Accounting | `/customers` | all, view | | | | view | | | |
 | Executive, Executive Support | `/customers` | all, view | | | | view | ✓ | | |
-| Lead Manager | `/leads` | view customers | | | | | | | |
+| Lead Manager | `/leads` | view customers | | | | add and edit | | | |
 | HR Specialist, HR Manager, Recruitment Specialist, Training Manager | `/waiting` until their modules arrive | | | | | | | | |
 
 - **Admins** are Workforce `SUPER_ADMIN`/`SYSTEM_ADMIN` accounts with an `@vaaphilippines.com` email. They need no row on the Access page.
@@ -65,11 +65,11 @@ The roles are the legacy CMS's. What each may do is one module × role map in `l
 | Page | What it does |
 |---|---|
 | `/customers` | Portfolio card, customer ledger (status, CS Specialist, review and warning flags), recent activity. Filters: status, `?cs=none`, `?review=1`. |
-| `/customers/<id>` | Status ribbon, CS Specialist, first payment, termination/reactivation counts, warnings, takeovers, accounts, customer notes, history, status form, details form, status log. |
+| `/customers/<id>` | Status ribbon, lead phase, CS Specialist, first payment, termination/reactivation counts, warnings, takeovers, accounts, customer notes, history, status form, details form, status log. In Customer Success Handoff, a **Mark onboarded** button for the CS Manager or the customer's CS Specialist. |
 | `/accounts`, `/accounts/<id>` | Account list by status; account profile with status, category/type/country (with local time), links, contract, account managers, notes (its own and its customer's), onboarding details and tickets, history. |
 | `/specialists` | CS team portfolios, customers without a CS Specialist, transfer/assign, takeovers (cover customers for a date range). |
 | `/approvals` | Pending reviews: Confirm keeps the change, Cancel puts the previous status back (cascaded accounts included). |
-| `/contracts` | Contract templates (`CON-001`) with typed sections (Percentage, Amount, Text, Yes/No) and the accounts using each. |
+| `/contracts` | Contract templates (`CON-001`) with typed terms (Percentage, Amount, Text, Yes/No), a template link, and the accounts using each. The same database as Lead Management's `/leads/contracts`. |
 | `/activity` | The activity log, filterable by date range, record, action, user and text. |
 | `/settings` | Admin-only lookup lists: categories, types, countries/regions (with time zone), termination reasons, lost reasons, inquiry types. Departments and services are shown read-only from Workforce. |
 | `/access` | Roles, and a Service Manager's department. |
@@ -78,10 +78,29 @@ The roles are the legacy CMS's. What each may do is one module × role map in `l
 
 | Page | What it does |
 |---|---|
-| `/leads` | Stats card, Kanban board by onboarding stage, New-lead drawer. `?stage=` filters the board. |
-| `/leads/<id>` | The lead, its onboarding link and email, the submitted form, and each sub-ticket's request group. |
+| `/leads` | Stats card, Kanban board, New-lead drawer. The columns are Customer Intake's stages (No link yet, Link sent, Form opened, Link expired), then Contract & Billing Initiation, Contract & Payment Confirmation and Customer Success Handoff. Onboarded leads leave the board. `?stage=` filters it to one column. |
+| `/leads/<id>` | The lead, its onboarding link and email, the workflow (phases in this lead's order, request type, pick and send the contract, confirm the signed contract and first payment, phase history), the submitted form, and each sub-ticket's request group. |
+| `/leads/contracts` | Contract & Billing's contract database: the same contracts and terms as `/contracts`, which the Lead Manager can add and edit. Each contract has its ID (`CON-001`), its own terms and a Google Drive/Docs template link. |
 | `/leads/settings` | Admin-only onboarding form settings (work hour minimums). |
 | `/leads/reports` | Lead reports for a date range (last 30 or 90 days, this year, or any two days; Philippine time). **Onboarding funnel:** the leads added in the range, followed to today through link sent, form opened, form submitted and Active, with the share reaching each step and the median days between steps. **Leads over time:** new leads per week (per month for ranges over about four months), with links sent, forms submitted and links that expired unused, and a table of who added the leads. **VA demand:** VAs requested on forms submitted in the range, by service, work hour type, request group and the primary contact's region. |
+
+## Lead phases
+
+All in `lib/lead-phase-fields.ts` and `lib/lead-phase.ts` (Nov 4, 2026). A lead's phase is never picked by hand: it is worked out from what has happened, and every change is logged in `lead_phase_logs` and the activity log.
+
+| Phase | Starts when | Done when |
+|---|---|---|
+| Customer Intake | the lead is added | the customer submits the onboarding form |
+| Contract & Billing Initiation | the form is submitted | the Lead Manager picks the contract for the lead's account, sends the generated email (template link and terms), and marks it as sent |
+| Contract & Payment Confirmation | the contract is sent | the Lead Manager confirms the date the contract was signed and the first payment (the customer's first payment date) |
+| Customer Success Handoff | the contract and payment are confirmed | the CS Manager or the customer's CS Specialist clicks **Mark onboarded** on the customer's page |
+| New Customer Onboarded | the handoff is done | (final; the lead leaves the board) |
+
+- **Special Request:** a customer who wants to meet the VA first (approved by the CEO outside the app). The Lead Manager switches the lead from Regular Request to Special Request on the lead's page, after a confirmation, any time after the form until the handoff is done. The lead then goes straight to Customer Success Handoff. After the handoff it moves to Contract & Payment Confirmation, and it reaches New Customer Onboarded only once the contract and payment are confirmed. Switching back to Regular puts it back in the regular order.
+- This is not the sub-tickets' **request group** (Regular, Expert, Casual), which stays per VA.
+- **Initial billing** belongs in Contract & Billing Initiation too. It will be generated and sent from the Accounting system once that exists; for now the phase moves on when the contract is sent.
+- **Contracts on VA connections:** some older connections follow a contract other than their account's. That arrives with VA connections in module 2 (`MODULE 2:` in `prisma/schema.prisma`).
+- A lead's status stays Pending throughout; the customer still becomes Active when a VA connection starts.
 
 ## Status rules
 
@@ -102,7 +121,8 @@ All in `lib/status.ts`, one transaction per change with its status log and activ
    - the Part 3 answers on the submission, if the customer filled them in
 
    Lead Management follows each lead: No link yet → Link sent → Form opened → Form submitted. On the lead's page, Lead Management sets each sub-ticket's **request group** (Regular by default, or Expert or Casual).
-4. **Customer Management** reads the submission and changes the status (Active, Paused, Cancelled, Terminated). Every change is logged with who made it, when, and why. A reason is required for Paused, Cancelled and Terminated.
+4. **Contract and handoff:** the lead moves through Contract & Billing Initiation, Contract & Payment Confirmation and Customer Success Handoff to New Customer Onboarded (see [Lead phases](#lead-phases)).
+5. **Customer Management** reads the submission and changes the status (Active, Paused, Cancelled, Terminated). Every change is logged with who made it, when, and why. A reason is required for Paused, Cancelled and Terminated.
 
 Customer and account IDs are always generated, in the legacy CMS formats: `CUST_` and `CLT_` followed by 12 hex characters. New IDs are checked against both this app and the legacy CMS copies in `public.customers` and `public.accounts`.
 
@@ -115,8 +135,9 @@ The app shares va-management's Supabase Postgres but only owns the **`vaa_sys`**
 | `access_users` | email, role and (Service Managers) department, for everyone except admins |
 | `setting_options` | the Settings lookup lists (category, value, label, order, on/off, time zone) |
 | `activity_logs` | the generic activity log every module writes through `logActivity()` in `lib/activity.ts` |
-| `customers` | customer ID, name, email, status, CS Specialist, first payment, termination/reactivation counts, pending review, created by and when |
+| `customers` | customer ID, name, email, status, CS Specialist, first payment, termination/reactivation counts, pending review, created by and when. For the lead workflow: lead phase (and since when), request type (Regular/Special), contract sent (when, by whom, which contract), contract signed on, contract and payment confirmed (when, by whom), handoff done (when, by whom). |
 | `customer_status_logs` | every status change (from, to, reason, termination reason, effective date, who, when) |
+| `lead_phase_logs` | every lead phase change (from, to, what moved it, who, when) |
 | `customer_takeovers` | a CS Specialist covering a customer between two dates |
 | `customer_account_notes` | notes on a customer or one of its accounts |
 | `onboarding_links` | link token, expiry, when it was opened, when it was submitted |
@@ -125,7 +146,7 @@ The app shares va-management's Supabase Postgres but only owns the **`vaa_sys`**
 | `account_contacts` | primary and secondary contact (name, role, email, WhatsApp, region, focal) |
 | `account_status_logs` | every account status change |
 | `account_managers` | the account's managers, one row each (name, email) |
-| `contracts`, `contract_section_defs`, `contract_sections` | contract templates, their typed sections, and each contract's values. `accounts.contract_id` says which applies. |
+| `contracts`, `contract_section_defs`, `contract_sections` | contract templates (with their template link), the typed terms a contract can have, and each contract's values. `accounts.contract_id` says which applies. |
 | `tickets` | main ticket per account request (`ticket_number` → TKT-000001) |
 | `app_settings` | general settings admins edit, one row per key (e.g. the work hour minimums); no row means the built-in defaults |
 | `ticket_requests` | one sub-ticket per VA: service, schedule and hours, night differential, additional hours, task tracker, start date, tasks, tools, request group. `platform` is only set on requests made before the platforms moved to the account. |
@@ -155,6 +176,7 @@ npm run db:apply -- prisma/sql/<file>.sql
 - `004_onboarding_google_form.sql`: added the Google Form's questions and Part 3 (additive only)
 - `005_cms_foundation_customers_accounts.sql`: CMS module 1 — roles, settings (seeded with the legacy defaults), activity log, customers and accounts parity, takeovers, notes, account managers, contracts (additive only)
 - `006_settings_monthly_tracker.sql`: the monthly work hour type, the task tracker answer and `app_settings` for the onboarding form's work hour minimums (additive only)
+- `007_lead_phases_contract_templates.sql`: lead phases and request type on `customers`, `lead_phase_logs`, `contracts.template_url`; moves leads that already submitted the form to Contract & Billing Initiation (additive only)
 
 ## Setup
 
