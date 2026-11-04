@@ -27,12 +27,13 @@ export default function LeadsLoading() {
           <Block className="h-3.5 w-48" />
         </div>
       </div>
-      <div className="no-scrollbar flex gap-6 overflow-x-auto pb-2">
-        {Array.from({ length: 5 }, (_, col) => (
-          <div key={col} className="flex w-[268px] shrink-0 flex-col gap-3">
-            <Block className="h-4 w-24" />
-            <Block className="h-24 w-full" />
-            {col < 3 && <Block className="h-24 w-full" />}
+      <div className="rounded-2xl border bg-card">
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} className="flex items-center gap-6 border-b px-4 py-3 last:border-0">
+            <Block className="h-4 w-40" />
+            <Block className="h-3.5 w-28" />
+            <Block className="h-5 w-44 rounded-full" />
+            <Block className="ml-auto h-3.5 w-20" />
           </div>
         ))}
       </div>

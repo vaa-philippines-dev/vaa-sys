@@ -56,6 +56,7 @@ The roles are the legacy CMS's. What each may do is one module × role map in `l
 
 - **Admins** are Workforce `SUPER_ADMIN`/`SYSTEM_ADMIN` accounts with an `@vaaphilippines.com` email. They need no row on the Access page.
 - **Everyone else** gets a role on the **Access** page (`vaa_sys.access_users`). A Service Manager also gets one of Workforce's service departments.
+- **Leads import** (`/leads/import`, the template and upload): admins only.
 - **Lead reports** (`/leads/reports`, read only): the Lead Manager, CS Managers, Executives, Executive Support and admins. Those without the rest of Lead Management see only the reports in its sidebar, and reach them from Customer Management's system switcher.
 - **CS Specialist scope:** customers assigned to them (`customers.assigned_specialist_email`) plus customers they cover through a running takeover. Out-of-scope customers and accounts read as "not found".
 - The rules live in `lib/permissions.ts` and `lib/access-fields.ts`, the session side in `lib/auth.ts`, and the customer scope in `lib/scope.ts`.
@@ -78,7 +79,8 @@ The roles are the legacy CMS's. What each may do is one module × role map in `l
 
 | Page | What it does |
 |---|---|
-| `/leads` | Stats card, Kanban board, New-lead drawer. The columns are Customer Intake's stages (No link yet, Link sent, Form opened, Link expired), then Contract & Billing Initiation, Contract & Payment Confirmation and Customer Success Handoff. Onboarded leads leave the board. `?stage=` filters it to one column. |
+| `/leads` | Stats card, the leads table (name and email, Customer ID, phase, Regular/Special, day, added on and by; newest first, with search) and the New-lead drawer. The phase reads as Customer Intake's step (No link yet, Link sent, Form opened, Link expired) or the phase after the form. Onboarded leads leave the list. `?stage=` (the sidebar's views) filters it. Admins also get **Template** and **Import**. |
+| `/leads/import` | Admins only. Download the Excel template, upload it filled in (or a CSV saved from it), check the preview, then import. See [Importing leads](#importing-leads). |
 | `/leads/<id>` | The lead, its onboarding link and email, the workflow (phases in this lead's order, request type, pick and send the contract, confirm the signed contract and first payment, phase history), the submitted form, and each sub-ticket's request group. |
 | `/leads/contracts` | Contract & Billing's contract database: the same contracts and terms as `/contracts`, which the Lead Manager can add and edit. Each contract has its ID (`CON-001`), its own terms and a Google Drive/Docs template link. |
 | `/leads/settings` | Admin-only onboarding form settings (work hour minimums). |
@@ -101,6 +103,30 @@ All in `lib/lead-phase-fields.ts` and `lib/lead-phase.ts` (Nov 4, 2026). A lead'
 - **Initial billing** belongs in Contract & Billing Initiation too. It will be generated and sent from the Accounting system once that exists; for now the phase moves on when the contract is sent.
 - **Contracts on VA connections:** some older connections follow a contract other than their account's. That arrives with VA connections in module 2 (`MODULE 2:` in `prisma/schema.prisma`).
 - A lead's status stays Pending throughout; the customer still becomes Active when a VA connection starts.
+
+## Importing leads
+
+Admins can add or update many leads at once (`lib/lead-import.ts`, `/leads/import`):
+
+1. **Template:** an Excel file built fresh on each download.
+   - The Phase, Request type, CS Specialist and Contract columns are dropdowns of what is in the system at that moment (the CS Specialist list only appears once there are active CS team members).
+   - A "How to use" sheet explains every column.
+2. **Upload:** the filled .xlsx, or a CSV saved from it, up to 500 rows.
+   - **Without a Customer ID,** a row adds a new lead with a generated ID.
+   - **With a Customer ID,** it updates that lead, and blank cells keep what the lead has. Each lead goes on one row; a Customer ID (or a new lead's name) on two rows of a file is an error.
+   - **A new lead whose name is already in vaa-sys or the legacy CMS** is skipped; put its Customer ID in the row to update it instead.
+3. **Preview:** every row shows whether it will be added, updated or skipped, or what is wrong with it. Nothing is saved until every row is fine. The file is then checked again and saved in one transaction.
+
+The phase isn't stored as typed: the import records the steps that phase needs, and the phase follows from them as usual (see [Lead phases](#lead-phases)).
+- **Steps it records:** intake done, contract sent, contract and payment confirmed, handoff done.
+- **Dates:** each step uses the date in its column, or the import date when the cell is blank.
+- **Steps not yet reached** are cleared, and a step the phase hasn't reached can't have a date.
+
+An imported lead has no onboarding form or account:
+- `customers.intake_completed_at` marks it past Customer Intake.
+- Its contract is kept on the customer (`customers.contract_id`) until it has an account.
+
+Every import writes to the activity log ("Imported from <file>") and the phase history.
 
 ## Status rules
 
@@ -135,7 +161,7 @@ The app shares va-management's Supabase Postgres but only owns the **`vaa_sys`**
 | `access_users` | email, role and (Service Managers) department, for everyone except admins |
 | `setting_options` | the Settings lookup lists (category, value, label, order, on/off, time zone) |
 | `activity_logs` | the generic activity log every module writes through `logActivity()` in `lib/activity.ts` |
-| `customers` | customer ID, name, email, status, CS Specialist, first payment, termination/reactivation counts, pending review, created by and when. For the lead workflow: lead phase (and since when), request type (Regular/Special), contract sent (when, by whom, which contract), contract signed on, contract and payment confirmed (when, by whom), handoff done (when, by whom). |
+| `customers` | customer ID, name, email, status, CS Specialist, first payment, termination/reactivation counts, pending review, created by and when. For the lead workflow: lead phase (and since when), request type (Regular/Special), intake done without the form (imported leads), the contract picked for a lead without an account, contract sent (when, by whom, which contract), contract signed on, contract and payment confirmed (when, by whom), handoff done (when, by whom). |
 | `customer_status_logs` | every status change (from, to, reason, termination reason, effective date, who, when) |
 | `lead_phase_logs` | every lead phase change (from, to, what moved it, who, when) |
 | `customer_takeovers` | a CS Specialist covering a customer between two dates |
@@ -177,6 +203,7 @@ npm run db:apply -- prisma/sql/<file>.sql
 - `005_cms_foundation_customers_accounts.sql`: CMS module 1 — roles, settings (seeded with the legacy defaults), activity log, customers and accounts parity, takeovers, notes, account managers, contracts (additive only)
 - `006_settings_monthly_tracker.sql`: the monthly work hour type, the task tracker answer and `app_settings` for the onboarding form's work hour minimums (additive only)
 - `007_lead_phases_contract_templates.sql`: lead phases and request type on `customers`, `lead_phase_logs`, `contracts.template_url`; moves leads that already submitted the form to Contract & Billing Initiation (additive only)
+- `008_lead_import.sql`: `customers.intake_completed_at` and `customers.contract_id`, for leads imported from the template (additive only)
 
 ## Setup
 

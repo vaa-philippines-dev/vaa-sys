@@ -19,26 +19,30 @@ const day = (d: Date) => new Date(`${dayString(d)}T00:00:00+08:00`).toLocaleDate
 // phase needs (pick and send the contract, confirm the signed contract and
 // first payment). The CS team's handoff happens in Customer Management.
 export function LeadWorkflow({ customer, choices, senderName, canEdit }: { customer: Customer; choices: ContractChoice[]; senderName: string; canEdit: boolean }) {
-  const formSubmitted = customer.submissions.length > 0
+  // An imported lead can be past Customer Intake without the form.
+  const formSubmitted = customer.submissions.length > 0 || !!customer.intakeCompletedAt
   const phase = customer.leadPhase
   const order = phaseOrder(customer.requestType)
   const at = order.indexOf(phase)
   const doneAt: Partial<Record<LeadPhase, Date | null>> = {
-    CUSTOMER_INTAKE: customer.submissions[0]?.submittedAt ?? null,
+    CUSTOMER_INTAKE: customer.submissions[0]?.submittedAt ?? customer.intakeCompletedAt,
     CONTRACT_BILLING_INITIATION: customer.contractSentAt,
     CONTRACT_PAYMENT_CONFIRMATION: customer.contractConfirmedAt,
     CUSTOMER_SUCCESS_HANDOFF: customer.handoffCompletedAt,
   }
 
   const account = customer.accounts.find((a) => a.submission) ?? customer.accounts[0] ?? null
-  const contract = account?.contractId ? (choices.find((c) => c.id === account.contractId) ?? null) : null
+  // A lead without an account (imported) keeps its contract on the customer.
+  const contractId = account ? account.contractId : customer.contractId
+  const contract = contractId ? (choices.find((c) => c.id === contractId) ?? null) : null
+  const pickedName = account ? account.contract && `${account.contract.contractCode} · ${account.contract.name}` : null
   const terms = contract?.terms.map((t) => ({ name: t.name, value: formatSectionValue(t.fieldType, t.value) })) ?? []
   const email = contract
     ? contractEmail({ customerName: customer.name, senderName, contractName: contract.name, contractCode: contract.contractCode, templateUrl: contract.templateUrl, terms })
     : null
   const mailto = email ? `mailto:${encodeURIComponent(customer.email ?? '')}?subject=${encodeURIComponent(email.subject)}&body=${encodeURIComponent(email.body)}` : null
   const confirmed = !!customer.contractConfirmedAt
-  const sentOther = !!customer.contractSentAt && !!account?.contractId && customer.contractSentId !== account.contractId
+  const sentOther = !!customer.contractSentAt && !!contractId && customer.contractSentId !== contractId
   const mayChangeType = canEdit && formSubmitted && !customer.handoffCompletedAt && phase !== 'NEW_CUSTOMER_ONBOARDED'
 
   return (
@@ -96,22 +100,18 @@ export function LeadWorkflow({ customer, choices, senderName, canEdit }: { custo
           <div>
             <h2 className="text-base font-semibold">Contract</h2>
             <p className="text-sm text-muted-foreground">
-              Contract &amp; Billing Initiation: pick the contract for {account ? account.name : 'the account'}, send it, then mark it as sent.
+              Contract &amp; Billing Initiation: pick the contract for {account ? account.name : customer.name}, send it, then mark it as sent.
             </p>
           </div>
 
           {canEdit && !confirmed ? (
-            <ContractPicker
-              customerId={customer.id}
-              current={account?.contractId ?? null}
-              choices={choices.map((c) => ({ id: c.id, label: `${c.contractCode} · ${c.name}` }))}
-            />
+            <ContractPicker customerId={customer.id} current={contractId} choices={choices.map((c) => ({ id: c.id, label: `${c.contractCode} · ${c.name}` }))} />
           ) : (
             <p className="text-sm">
-              {account?.contract ? `${account.contract.contractCode} · ${account.contract.name}` : <span className="text-muted-foreground">No contract picked.</span>}
+              {contract ? `${contract.contractCode} · ${contract.name}` : pickedName ?? <span className="text-muted-foreground">No contract picked.</span>}
             </p>
           )}
-          {account?.contractId && !contract && <p className="text-xs text-muted-foreground">This account’s contract is switched off, so it can’t be sent. Pick another one.</p>}
+          {contractId && !contract && <p className="text-xs text-muted-foreground">This contract is switched off, so it can’t be sent. Pick another one.</p>}
 
           {contract && (
             <div className="space-y-3">

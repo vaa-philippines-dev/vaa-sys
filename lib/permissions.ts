@@ -31,6 +31,9 @@ export const MODULES = [
   // Lead Management's reports (/leads/reports): read-only figures on leads,
   // onboarding and the VAs requested.
   'leadReports',
+  // The Leads Excel template and upload (/leads/import): adds and updates
+  // leads at any phase. Admins only.
+  'leadImport',
   // Later modules. Defaults follow the legacy grid; each module confirms
   // them when it is built.
   'serviceRequests',
@@ -91,6 +94,7 @@ const GRID: Record<Module, Partial<Record<AccessRole, Grant>>> = {
   // The Lead Manager, plus the managers who follow the pipeline. Read only:
   // the reports never change anything.
   leadReports: { LEAD_MANAGER: R, CS_MANAGER: R, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
+  leadImport: {},
 
   serviceRequests: {
     CS_MANAGER: CRUD,

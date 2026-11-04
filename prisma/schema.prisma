@@ -193,6 +193,13 @@ model Customer {
   leadPhase                LeadPhase       @default(CUSTOMER_INTAKE) @map("lead_phase")
   leadPhaseChangedAt       DateTime        @default(now()) @map("lead_phase_changed_at")
   requestType              LeadRequestType @default(REGULAR) @map("request_type")
+  // Customer Intake done without the onboarding form: leads imported from
+  // the Leads template (lib/lead-import.ts) at a later phase.
+  intakeCompletedAt        DateTime?       @map("intake_completed_at")
+  // The contract picked for a lead that has no account yet (imported
+  // leads). A lead from the form uses its account's contract instead.
+  contractId               String?         @map("contract_id")
+  contract                 Contract?       @relation("LeadContract", fields: [contractId], references: [id], onDelete: SetNull)
   // The contract email sent to the lead, and which contract it was for.
   contractSentAt           DateTime?       @map("contract_sent_at")
   contractSentByEmail      String?         @map("contract_sent_by_email")
@@ -542,6 +549,7 @@ model Contract {
   // account's. Add contract_id to va_connections (null = the account's)
   // when that table exists.
   sentToCustomers Customer[] @relation("ContractSent")
+  leads           Customer[] @relation("LeadContract")
 
   @@map("contracts")
   @@schema("vaa_sys")
