@@ -28,6 +28,9 @@ export const MODULES = [
   'activityLogs',
   'access',
   'leads',
+  // Lead Management's reports (/leads/reports): read-only figures on leads,
+  // onboarding and the VAs requested.
+  'leadReports',
   // Later modules. Defaults follow the legacy grid; each module confirms
   // them when it is built.
   'serviceRequests',
@@ -82,6 +85,9 @@ const GRID: Record<Module, Partial<Record<AccessRole, Grant>>> = {
   // CS Managers only grant the Customer Specialist role (grantableRoles).
   access: { CS_MANAGER: CRU },
   leads: { LEAD_MANAGER: CRU },
+  // The Lead Manager, plus the managers who follow the pipeline. Read only:
+  // the reports never change anything.
+  leadReports: { LEAD_MANAGER: R, CS_MANAGER: R, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
 
   serviceRequests: {
     CS_MANAGER: CRUD,

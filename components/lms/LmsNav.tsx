@@ -2,18 +2,46 @@
 
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
-import { Plus, Settings, Users } from 'lucide-react'
+import { ChartColumn, Plus, Settings, Users } from 'lucide-react'
 import { STAGE_COLUMNS, STAGE_META } from '@/components/lms/stage-meta'
 import type { OnboardingStage } from '@/lib/customer-fields'
 import { cn } from '@/lib/utils'
 
 // The LMS sidebar's nav: the board as the main item, onboarding stages as
-// "Views" (each a filter on the board, with its live count).
-export function LmsNav({ total, byStage, showSettings }: { total: number; byStage: Record<OnboardingStage, number>; showSettings?: boolean }) {
+// "Views" (each a filter on the board, with its live count). People who only
+// have Lead reports (board false) see just the Reports item.
+export function LmsNav({
+  total,
+  byStage,
+  board,
+  showReports,
+  showSettings,
+}: {
+  total: number
+  byStage: Record<OnboardingStage, number>
+  board: boolean
+  showReports?: boolean
+  showSettings?: boolean
+}) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const onBoard = pathname === '/leads'
   const stage = onBoard ? searchParams.get('stage') : null
+
+  const reportsLink = showReports && (
+    <Link
+      href="/leads/reports"
+      className={cn(
+        'flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] font-medium',
+        pathname === '/leads/reports' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+      )}
+    >
+      <ChartColumn className="h-[15px] w-[15px]" strokeWidth={1.75} />
+      Reports
+    </Link>
+  )
+
+  if (!board) return <nav className="flex flex-col gap-0.5">{reportsLink}</nav>
 
   return (
     <div className="flex flex-col gap-5">
@@ -40,6 +68,7 @@ export function LmsNav({ total, byStage, showSettings }: { total: number; byStag
           <Plus className="h-[15px] w-[15px]" strokeWidth={1.75} />
           New lead
         </Link>
+        {reportsLink}
         {showSettings && (
           <Link
             href="/leads/settings"

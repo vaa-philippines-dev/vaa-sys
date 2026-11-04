@@ -3,7 +3,7 @@
 One app with two areas on one database. It replaces the legacy Apps Script CMS step by step (Oct 21, 2026 meeting with Ian):
 
 - **Customer Management** (`/customers`) is for Customer Specialists and their manager: every customer, their status and its history.
-- **Lead Management** (`/leads`) is for the Lead Manager (Miss Mary): adding new customers and sending them their onboarding link.
+- **Lead Management** (`/leads`) is for the Lead Manager (Miss Mary): adding new customers and sending them their onboarding link. Its **Lead reports** (`/leads/reports`) are also open to CS Managers and Executives.
 - **Onboarding form** (`/onboarding/<token>`) is the public form a customer opens from that link. It asks the same questions as VAA's Google Form "CUSTOMER ONBOARDING FORM", in three parts:
   - **Part 1, customer profile:**
     - primary and secondary contacts with roles, and whether the primary contact is the focal person
@@ -56,6 +56,7 @@ The roles are the legacy CMS's. What each may do is one module × role map in `l
 
 - **Admins** are Workforce `SUPER_ADMIN`/`SYSTEM_ADMIN` accounts with an `@vaaphilippines.com` email. They need no row on the Access page.
 - **Everyone else** gets a role on the **Access** page (`vaa_sys.access_users`). A Service Manager also gets one of Workforce's service departments.
+- **Lead reports** (`/leads/reports`, read only): the Lead Manager, CS Managers, Executives, Executive Support and admins. Those without the rest of Lead Management see only the reports in its sidebar, and reach them from Customer Management's system switcher.
 - **CS Specialist scope:** customers assigned to them (`customers.assigned_specialist_email`) plus customers they cover through a running takeover. Out-of-scope customers and accounts read as "not found".
 - The rules live in `lib/permissions.ts` and `lib/access-fields.ts`, the session side in `lib/auth.ts`, and the customer scope in `lib/scope.ts`.
 
@@ -72,6 +73,15 @@ The roles are the legacy CMS's. What each may do is one module × role map in `l
 | `/activity` | The activity log, filterable by date range, record, action, user and text. |
 | `/settings` | Admin-only lookup lists: categories, types, countries/regions (with time zone), termination reasons, lost reasons, inquiry types. Departments and services are shown read-only from Workforce. |
 | `/access` | Roles, and a Service Manager's department. |
+
+## Lead Management pages
+
+| Page | What it does |
+|---|---|
+| `/leads` | Stats card, Kanban board by onboarding stage, New-lead drawer. `?stage=` filters the board. |
+| `/leads/<id>` | The lead, its onboarding link and email, the submitted form, and each sub-ticket's request group. |
+| `/leads/settings` | Admin-only onboarding form settings (work hour minimums). |
+| `/leads/reports` | Lead reports for a date range (last 30 or 90 days, this year, or any two days; Philippine time). **Onboarding funnel:** the leads added in the range, followed to today through link sent, form opened, form submitted and Active, with the share reaching each step and the median days between steps. **Leads over time:** new leads per week (per month for ranges over about four months), with links sent, forms submitted and links that expired unused, and a table of who added the leads. **VA demand:** VAs requested on forms submitted in the range, by service, work hour type, request group and the primary contact's region. |
 
 ## Status rules
 

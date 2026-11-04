@@ -46,7 +46,12 @@ export default async function CmsLayout({ children }: { children: React.ReactNod
   const items = candidates.filter((i): i is CmsNavItem => !!i)
 
   const others: SystemLink[] = [
-    ...(canUse(user.role, 'leads') ? [{ label: 'Lead Management System', href: '/leads' }] : []),
+    // CS Managers and Executives reach Lead Management for its reports only.
+    ...(canUse(user.role, 'leads')
+      ? [{ label: 'Lead Management System', href: '/leads' }]
+      : can(r, 'leadReports')
+        ? [{ label: 'Lead reports', href: '/leads/reports' }]
+        : []),
     ...(user.role === 'ADMIN' ? [{ label: 'All VAA systems', href: '/' }] : []),
     ...EXTERNAL_SYSTEMS,
   ]
