@@ -1,11 +1,14 @@
+import Image from 'next/image'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
-import { ArrowRight, Users, UserPlus } from 'lucide-react'
+import { ArrowRight, ExternalLink } from 'lucide-react'
 import { requireSignedIn, displayName } from '@/lib/auth'
 import { homeFor } from '@/lib/access-fields'
 import { countCustomers } from '@/lib/customers'
+import { CMS_ICON, EXTERNAL_SYSTEMS, LMS_ICON } from '@/components/lms/systems'
 
 // Admins land here and pick an area; everyone else goes straight to theirs.
+// The other VAA systems are listed too, each with its own favicon.
 export default async function HomePage() {
   const user = await requireSignedIn()
   if (user.role !== 'ADMIN') redirect(homeFor(user.role))
@@ -14,18 +17,21 @@ export default async function HomePage() {
   const areas = [
     {
       href: '/customers',
-      icon: Users,
+      icon: CMS_ICON,
       title: 'Customer Management',
       who: 'Customer Specialists and their manager',
       stat: `${counts.total} ${counts.total === 1 ? 'customer' : 'customers'}`,
+      external: false,
     },
     {
       href: '/leads',
-      icon: UserPlus,
+      icon: LMS_ICON,
       title: 'Lead Management',
       who: 'New customers and onboarding links',
       stat: `${counts.pending} in onboarding`,
+      external: false,
     },
+    ...EXTERNAL_SYSTEMS.map((s) => ({ href: s.href, icon: s.icon ?? CMS_ICON, title: s.label, who: s.about ?? '', stat: 'Opens in a new tab', external: true })),
   ]
 
   return (
@@ -35,19 +41,35 @@ export default async function HomePage() {
         <p className="mt-1 text-sm text-muted-foreground">Choose where to work. Customer Specialists and Lead Managers go straight to their own area.</p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        {areas.map((a) => (
-          <Link key={a.href} href={a.href} className="group flex flex-col gap-3 rounded-xl border bg-card p-5 hover:border-primary/40 hover:bg-accent">
-            <a.icon className="h-5 w-5 text-primary" />
-            <div>
-              <p className="font-semibold">{a.title}</p>
-              <p className="text-sm text-muted-foreground">{a.who}</p>
-            </div>
-            <div className="mt-auto flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">{a.stat}</span>
-              <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-            </div>
-          </Link>
-        ))}
+        {areas.map((a) => {
+          const body = (
+            <>
+              <Image src={a.icon} alt="" width={64} height={64} className="h-7 w-7 object-contain" />
+              <div>
+                <p className="font-semibold">{a.title}</p>
+                <p className="text-sm text-muted-foreground">{a.who}</p>
+              </div>
+              <div className="mt-auto flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">{a.stat}</span>
+                {a.external ? (
+                  <ExternalLink className="h-4 w-4 text-muted-foreground" />
+                ) : (
+                  <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                )}
+              </div>
+            </>
+          )
+          const className = 'group flex flex-col gap-3 rounded-xl border bg-card p-5 hover:border-primary/40 hover:bg-accent'
+          return a.external ? (
+            <a key={a.href} href={a.href} target="_blank" rel="noopener noreferrer" className={className}>
+              {body}
+            </a>
+          ) : (
+            <Link key={a.href} href={a.href} className={className}>
+              {body}
+            </Link>
+          )
+        })}
       </div>
     </div>
   )

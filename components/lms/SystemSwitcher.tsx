@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import Image from 'next/image'
 import Link from 'next/link'
 import { Check, ChevronDown, ExternalLink } from 'lucide-react'
 import type { SystemLink } from '@/components/lms/systems'
@@ -45,25 +46,25 @@ export function SystemSwitcher({ current, others }: { current: string; others: S
             {current}
             <Check className="h-3.5 w-3.5" />
           </div>
-          {others.map((s) =>
-            s.external ? (
-              <a
-                key={s.href}
-                role="menuitem"
-                href={s.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-between px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                {s.label}
-                <ExternalLink className="h-3 w-3" />
+          {others.map((s) => {
+            const label = (
+              <span className="flex min-w-0 items-center gap-2">
+                {s.icon && <Image src={s.icon} alt="" width={32} height={32} className="h-4 w-4 shrink-0 object-contain" />}
+                <span className="truncate">{s.label}</span>
+              </span>
+            )
+            const className = 'flex items-center justify-between gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground'
+            return s.external ? (
+              <a key={s.href} role="menuitem" href={s.href} target="_blank" rel="noopener noreferrer" className={className}>
+                {label}
+                <ExternalLink className="h-3 w-3 shrink-0" />
               </a>
             ) : (
-              <Link key={s.href} role="menuitem" href={s.href} onClick={() => setOpen(false)} className="block px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground">
-                {s.label}
+              <Link key={s.href} role="menuitem" href={s.href} onClick={() => setOpen(false)} className={className}>
+                {label}
               </Link>
             )
-          )}
+          })}
         </div>
       )}
     </div>

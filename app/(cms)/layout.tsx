@@ -6,7 +6,7 @@ import { SignOutButton } from '@/components/layout/SignOutButton'
 import { CmsNav, type CmsNavItem } from '@/components/cms/CmsNav'
 import { STATUS_ORDER } from '@/components/cms/status-meta'
 import { SystemSwitcher } from '@/components/lms/SystemSwitcher'
-import { EXTERNAL_SYSTEMS, type SystemLink } from '@/components/lms/systems'
+import { CMS_ICON, EXTERNAL_SYSTEMS, LMS_ICON, type SystemLink } from '@/components/lms/systems'
 import { initialsFrom } from '@/components/lms/stage-meta'
 import { prisma } from '@/lib/prisma'
 import { requireSignedIn, displayName } from '@/lib/auth'
@@ -48,11 +48,11 @@ export default async function CmsLayout({ children }: { children: React.ReactNod
   const others: SystemLink[] = [
     // CS Managers and Executives reach Lead Management for its reports only.
     ...(canUse(user.role, 'leads')
-      ? [{ label: 'Lead Management System', href: '/leads' }]
+      ? [{ label: 'Lead Management System', href: '/leads', icon: LMS_ICON }]
       : can(r, 'leadReports')
-        ? [{ label: 'Lead reports', href: '/leads/reports' }]
+        ? [{ label: 'Lead reports', href: '/leads/reports', icon: LMS_ICON }]
         : []),
-    ...(user.role === 'ADMIN' ? [{ label: 'All VAA systems', href: '/' }] : []),
+    ...(user.role === 'ADMIN' ? [{ label: 'All VAA systems', href: '/', icon: CMS_ICON }] : []),
     ...EXTERNAL_SYSTEMS,
   ]
   const name = displayName(user)

@@ -35,7 +35,7 @@ Same stack as `va-management`: Next.js 16, React 19, Tailwind v4, shadcn, Prisma
   - a portfolio card (status-mix bar, accounts, VAs requested, status changes this week), a customer ledger with a status stripe per row, and a recent-activity feed from the status log
   - on each customer, a status ribbon showing how long they spent in each status
 
-Both sidebars have a system switcher between the two areas, the admin picker, Workforce and KPI Ms. The admin picker (`app/(app)/`, `/`) keeps the plain top-bar layout.
+Both sidebars have a system switcher between the two areas, the admin picker, Workforce and KPI Ms. The admin picker (`app/(app)/`, `/`) keeps the plain top-bar layout and lists the same four systems as cards. Each system is shown with its own favicon; the links and icons are in `components/lms/systems.ts` (Workforce's and KPI Ms's favicons are copied into `public/`).
 
 ## Who lands where
 
