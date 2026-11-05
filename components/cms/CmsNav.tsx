@@ -28,6 +28,9 @@ export function CmsNav({ items, byStatus }: { items: CmsNavItem[]; byStatus: Rec
   const searchParams = useSearchParams()
   const onList = pathname === '/customers'
   const status = onList ? searchParams.get('status') : null
+  // The list shows Active customers when no status is picked (and no CS
+  // Specialist or review view is open), so Active reads as the one chosen.
+  const shownStatus = status ?? (onList && !searchParams.get('cs') && !searchParams.get('review') ? 'ACTIVE' : null)
 
   const isActive = (href: string) =>
     href === '/customers' ? (pathname === '/customers' || pathname.startsWith('/customers/')) && !status : pathname === href || pathname.startsWith(`${href}/`)
@@ -71,7 +74,7 @@ export function CmsNav({ items, byStatus }: { items: CmsNavItem[]; byStatus: Rec
             href={`/customers?status=${s}`}
             className={cn(
               'flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px]',
-              status === s ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              shownStatus === s ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
             )}
           >
             <span className={cn('h-1.5 w-1.5 rounded-full', STATUS_META[s].dot)} />

@@ -6,6 +6,7 @@ import { dayString, manilaDate } from '@/lib/customer-fields'
 import { STATUS_META, STATUS_ORDER } from '@/components/cms/status-meta'
 import { CustomerBatch, CancelTakeoverButton } from '@/components/cms/SpecialistsBoard'
 import { ROLE_LABELS } from '@/lib/access-fields'
+import { SortableTable } from '@/components/ui/sortable-table'
 import { cn } from '@/lib/utils'
 
 const STATE_LABEL = { ACTIVE: 'Running', UPCOMING: 'Upcoming', EXPIRED: 'Ended', CANCELLED: 'Cancelled' } as const
@@ -94,18 +95,21 @@ export default async function SpecialistsPage() {
           <p className="text-sm text-muted-foreground">No takeovers in the last 60 days.</p>
         ) : (
           <div className="overflow-x-auto rounded-2xl border bg-card">
-            <table className="w-full text-sm">
-              <thead className="border-b text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-2.5 font-medium">Customer</th>
-                  <th className="px-4 py-2.5 font-medium">Covered by</th>
-                  <th className="px-4 py-2.5 font-medium">Dates</th>
-                  <th className="px-4 py-2.5 font-medium">State</th>
-                  <th className="px-4 py-2.5" />
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {takeovers.map((t) => (
+            <SortableTable
+              className="w-full text-sm"
+              theadClassName="border-b text-left text-[11px] uppercase tracking-wide text-muted-foreground"
+              tbodyClassName="divide-y"
+              columns={[
+                { key: 'customer', label: 'Customer', className: 'px-4 py-2.5 font-medium' },
+                { key: 'by', label: 'Covered by', className: 'px-4 py-2.5 font-medium' },
+                { key: 'dates', label: 'Dates', firstDir: 'desc', className: 'px-4 py-2.5 font-medium' },
+                { key: 'state', label: 'State', className: 'px-4 py-2.5 font-medium' },
+                { key: 'actions', label: <span className="sr-only">Actions</span>, sortable: false, className: 'px-4 py-2.5' },
+              ]}
+              rows={takeovers.map((t) => ({
+                id: t.id,
+                values: { customer: t.customer.name, by: t.specialistName, dates: t.startDate, state: Object.keys(STATE_LABEL).indexOf(t.state) },
+                node: (
                   <tr key={t.id} className={t.state === 'ACTIVE' || t.state === 'UPCOMING' ? '' : 'text-muted-foreground'}>
                     <td className="px-4 py-2.5">
                       <Link href={`/customers/${t.customer.id}`} className="hover:underline">
@@ -120,9 +124,9 @@ export default async function SpecialistsPage() {
                     <td className="px-4 py-2.5">{STATE_LABEL[t.state]}</td>
                     <td className="px-4 py-2.5 text-right">{manage && (t.state === 'ACTIVE' || t.state === 'UPCOMING') && <CancelTakeoverButton id={t.id} />}</td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                ),
+              }))}
+            />
           </div>
         )}
       </section>

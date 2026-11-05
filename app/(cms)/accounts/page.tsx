@@ -5,6 +5,7 @@ import { listAccounts } from '@/lib/accounts'
 import { customerScopeWhere } from '@/lib/scope'
 import { ACCOUNT_STATUSES, STATUS_LABELS, type AccountStatus } from '@/lib/customer-fields'
 import { STATUS_META } from '@/components/cms/status-meta'
+import { SortableTable } from '@/components/ui/sortable-table'
 import { cn } from '@/lib/utils'
 
 // Every account the person can see (legacy Accounts list), filterable by
@@ -59,18 +60,27 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
         </div>
       ) : (
         <div className="overflow-x-auto rounded-2xl border bg-card">
-          <table className="w-full text-sm">
-            <thead className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-              <tr className="border-b">
-                <th className="py-3 pl-6 pr-3 font-medium">Account</th>
-                <th className="px-3 py-3 font-medium">Customer</th>
-                <th className="px-3 py-3 font-medium">Status</th>
-                <th className="hidden px-3 py-3 font-medium md:table-cell">Category · Type</th>
-                <th className="hidden py-3 pl-3 pr-6 font-medium lg:table-cell">Country / region</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((a) => (
+          <SortableTable
+            className="w-full text-sm"
+            theadClassName="text-left text-[11px] uppercase tracking-wide text-muted-foreground"
+            headRowClassName="border-b"
+            columns={[
+              { key: 'name', label: 'Account', className: 'py-3 pl-6 pr-3 font-medium' },
+              { key: 'customer', label: 'Customer', className: 'px-3 py-3 font-medium' },
+              { key: 'status', label: 'Status', className: 'px-3 py-3 font-medium' },
+              { key: 'category', label: 'Category · Type', className: 'hidden px-3 py-3 font-medium md:table-cell' },
+              { key: 'country', label: 'Country / region', className: 'hidden py-3 pl-3 pr-6 font-medium lg:table-cell' },
+            ]}
+            rows={rows.map((a) => ({
+              id: a.id,
+              values: {
+                name: a.name,
+                customer: a.customer.name,
+                status: ACCOUNT_STATUSES.indexOf(a.status),
+                category: [a.category?.label, a.type?.label].filter(Boolean).join(' · '),
+                country: a.countryRegion?.label,
+              },
+              node: (
                 <tr key={a.id} className="group border-b last:border-b-0 hover:bg-muted/50">
                   <td className={cn('relative py-3 pl-6 pr-3 before:absolute before:inset-y-2.5 before:left-2.5 before:w-1 before:rounded-full', STATUS_META[a.status].stripe)}>
                     <Link href={`/accounts/${a.id}`} className="font-medium group-hover:underline">
@@ -96,9 +106,9 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
                   <td className="hidden px-3 py-3 text-muted-foreground md:table-cell">{[a.category?.label, a.type?.label].filter(Boolean).join(' · ') || '–'}</td>
                   <td className="hidden py-3 pl-3 pr-6 text-muted-foreground lg:table-cell">{a.countryRegion?.label ?? '–'}</td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              ),
+            }))}
+          />
         </div>
       )}
     </main>

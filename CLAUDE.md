@@ -4,7 +4,7 @@ Guidance for Claude Code in this repo. The README explains what the app does (ar
 
 ## What this is
 
-vaa-sys is VAA Philippines' internal Next.js app that replaces the legacy Apps Script CMS one module at a time. It has two areas on one database: **Customer Management** (`app/(cms)/`) and **Lead Management** (`app/(lms)/`), plus a public customer onboarding form (`app/onboarding/[token]/`). Two developers work on it, each with their own Claude Code sessions, so keep changes small, on a branch, and explained in the PR.
+vaa-sys is VAA Philippines' internal Next.js app that replaces the legacy Apps Script CMS one module at a time. It has three areas on one database: **Customer Management** (`app/(cms)/`), **Lead Management** (`app/(lms)/`) and the **Accounting System** (`app/(acct)/`), plus a public customer onboarding form (`app/onboarding/[token]/`). Two developers work on it, each with their own Claude Code sessions, so keep changes small, on a branch, and explained in the PR.
 
 People mentioned in code and docs: **Ian** (Business Process Manager, sets priorities in the weekly meetings), **Miss Mary** (Lead Manager). Meeting dates in the README (Oct 19, 21, 26) are where requirements came from.
 
@@ -37,7 +37,7 @@ Locally, `DEV_AUTH_BYPASS_EMAIL` in `.env.local` signs in as that Workforce user
 
 - **Next.js 16 / React 19.** APIs differ from older versions you may remember: route protection lives in `proxy.ts` (not `middleware.ts`), and `cookies()`/`params` are async. When unsure, read the docs shipped in `node_modules/next/dist/docs/` instead of guessing.
 - **Prisma 7** with `@prisma/adapter-pg`. The client is generated into `src/generated/prisma` (gitignored); import from `@/src/generated/prisma/client`. Run `npx prisma generate` after editing `prisma/schema.prisma`.
-- **Tailwind v4 + shadcn** (`components/ui/`). The two areas have their own palettes, scoped by the `.lms` and `.cms` classes in `app/globals.css`. Keep each area's look; don't hardcode colors that belong in those tokens.
+- **Tailwind v4 + shadcn** (`components/ui/`). The three areas have their own palettes, scoped by the `.lms`, `.cms` and `.acct` classes in `app/globals.css`. Keep each area's look; don't hardcode colors that belong in those tokens.
 - **Supabase Auth** with Google only, the same Supabase project as va-management (Workforce).
 - Dates are Philippine time (`manilaToday()`, `dateOnly()` in `lib/customer-fields.ts`). Vercel runs in `syd1`, next to the database.
 
@@ -47,6 +47,8 @@ The Postgres database is shared with **va-management** (Workforce). This app own
 
 - **Never** run `prisma migrate`, `prisma db push`, or anything that diffs or alters the database. `prisma/schema.prisma` lists only `vaa_sys` on purpose.
 - **Never write to `public.*`.** va-management's tables (`public.users`, `public.departments`, `public.skills`, `public.customers`, `public.accounts`...) are read with raw SQL in `lib/auth.ts` and `lib/workforce.ts`, and never modelled in Prisma.
+  - **The one exception:** service-level rows of `public.departments` and the `job_description` column of `public.skills`, edited from Lead Management's Departments & services page through `lib/workforce-org.ts` only (agreed on Nov 5, 2026). Updates and inserts only: never delete (it cascades through Workforce), never merge or split, write timestamps in UTC, and log each change in `vaa_sys.activity_logs`. Don't widen this to other tables or columns without asking.
+- **Confidential service rates** (Standard Billing Rate, VA Base Rate) are encrypted with `RATES_ENCRYPTION_KEY` (`lib/rates.ts`), which is set only in Vercel. Never add that key to a `.env*` file, never decrypt, print or log a rate, and never add a way to read them outside `canViewRates()`. Changes to `lib/rates.ts` need the user's review.
 - **Schema changes:** edit `prisma/schema.prisma`, then add the next numbered file in `prisma/sql/` (look at the folder for the next number, and at `origin/main` too, since the other developer may have taken it). Keep it additive where possible. `npm run db:sql` prints the full schema SQL as a starting point.
 - **Don't apply SQL yourself.** A developer reviews the file and runs `npm run db:apply -- prisma/sql/<file>.sql`. Say in your summary that a SQL file needs applying.
 - When you add a table or SQL file, update the README's Database table and the list of SQL files.

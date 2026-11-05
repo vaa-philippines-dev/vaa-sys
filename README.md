@@ -1,9 +1,10 @@
 # VAA Systems (vaa-sys)
 
-One app with two areas on one database. It replaces the legacy Apps Script CMS step by step (Oct 21, 2026 meeting with Ian):
+One app with three areas on one database. It replaces the legacy Apps Script CMS step by step (Oct 21, 2026 meeting with Ian):
 
 - **Customer Management** (`/customers`) is for Customer Specialists and their manager: every customer, their status and its history.
-- **Lead Management** (`/leads`) is for the Lead Manager (Miss Mary): adding new customers, sending them their onboarding link, then their contract, until the CS team takes them over (see [Lead phases](#lead-phases)). Its **Lead reports** (`/leads/reports`) are also open to CS Managers and Executives.
+- **Lead Management** (`/leads`) is for the Lead Manager (Miss Mary): adding new customers, sending them their onboarding link, then their contract and initial bill, until the CS team takes them over (see [Lead phases](#lead-phases)). Its **Lead reports** (`/leads/reports`) are also open to CS Managers and Executives.
+- **Accounting System** (`/accounting`) is for Accounting: every bill and payment, Foregone Revenue, and the rates and fees bills start from (see [Accounting System](#accounting-system)).
 - **Onboarding form** (`/onboarding/<token>`) is the public form a customer opens from that link. It asks the same questions as VAA's Google Form "CUSTOMER ONBOARDING FORM", in three parts:
   - **Part 1, customer profile:**
     - primary and secondary contacts with roles, and whether the primary contact is the focal person
@@ -24,7 +25,7 @@ New here? Start with [Setup](#setup) and [Working together](#working-together). 
 
 Same stack as `va-management`: Next.js 16, React 19, Tailwind v4, shadcn, Prisma 7 with `@prisma/adapter-pg`, and Supabase Auth with Google.
 
-**One app, two looks.** Each area has its own sidebar layout and palette, scoped by a class in `app/globals.css`:
+**One app, three looks.** Each area has its own sidebar layout and palette, scoped by a class in `app/globals.css`:
 - **Lead Management** (`app/(lms)/`, `.lms`): the design of the original `lead-management-sys`.
   - "VAA · LMS" sidebar, cream and near-black palette
   - stats card, Kanban board by onboarding stage, New-lead drawer
@@ -34,8 +35,11 @@ Same stack as `va-management`: Next.js 16, React 19, Tailwind v4, shadcn, Prisma
   - one color per customer status
   - a portfolio card (status-mix bar, accounts, VAs requested, status changes this week), a customer ledger with a status stripe per row, and a recent-activity feed from the status log
   - on each customer, a status ribbon showing how long they spent in each status
+- **Accounting System** (`app/(acct)/`, `.acct`): the third sibling.
+  - "VAA · Accounting" sidebar, cool ledger-paper ground with a deep navy ink
+  - bill statuses (Draft, Sent, Partly paid, Paid, Void) use the shared status tokens
 
-Both sidebars have a system switcher between the two areas, the admin picker, Workforce and KPI Ms. The admin picker (`app/(app)/`, `/`) keeps the plain top-bar layout.
+Every sidebar has a system switcher between the areas the person can use, the admin picker, Workforce and KPI Ms. The admin picker (`app/(app)/`, `/`) keeps the plain top-bar layout.
 
 ## Who lands where
 
@@ -43,21 +47,25 @@ Everyone signs in with Google and needs an active VAA Workforce account (`public
 
 The roles are the legacy CMS's. What each may do is one module × role map in `lib/permissions.ts` (modelled on the legacy `_permDefaultFor` and `NAV_ROLE_DEFAULT`); every page and Server Action checks it on the server, and later modules extend it.
 
-| Role | Lands on | Customers & accounts | Status changes | CS Specialists | Approvals | Contracts | Activity log | Settings | Access page |
-|---|---|---|---|---|---|---|---|---|---|
-| Admin | Area picker (`/`) | all, edit | apply directly | manage | ✓ | manage | ✓ | ✓ | ✓ (every role) |
-| Customer Success Manager | `/customers` | all, edit | apply directly | manage | ✓ | manage | ✓ | | ✓ (Customer Specialists only) |
-| Customer Specialist | `/customers` | own + covering, edit | pause/terminate/cancel go to review | view | | view | own customers' history | | |
-| Service Manager (with a department) | `/customers` | all, view | | | | | | | |
-| Accounting | `/customers` | all, view | | | | view | | | |
-| Executive, Executive Support | `/customers` | all, view | | | | view | ✓ | | |
-| Lead Manager | `/leads` | view customers | | | | add and edit | | | |
-| HR Specialist, HR Manager, Recruitment Specialist, Training Manager | `/waiting` until their modules arrive | | | | | | | | |
+| Role | Lands on | Customers & accounts | Status changes | CS Specialists | Approvals | Contracts | Accounting System | Activity log | Settings | Access page |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Admin | Area picker (`/`) | all, edit | apply directly | manage | ✓ | manage | manage | ✓ | ✓ | ✓ (every role) |
+| Customer Success Manager | `/customers` | all, edit | apply directly | manage | ✓ | manage | view | ✓ | | ✓ (Customer Specialists only) |
+| Customer Specialist | `/customers` | own + covering, edit | pause/terminate/cancel go to review | view | | view | | own customers' history | | |
+| Service Manager (with a department) | `/customers` | all, view | | | | | | | | |
+| Accounting | `/accounting` | all, view | | | | view | manage (payments, voids, rates and fees) | | | |
+| Executive, Executive Support | `/customers` | all, view | | | | view | view | ✓ | | |
+| Lead Manager | `/leads` | view customers | | | | add and edit | view (prepares initial bills on the lead's page) | | | |
+| HR Specialist, HR Manager, Recruitment Specialist, Training Manager | `/waiting` until their modules arrive | | | | | | | | | |
 
 - **Admins** are Workforce `SUPER_ADMIN`/`SYSTEM_ADMIN` accounts with an `@vaaphilippines.com` email. They need no row on the Access page.
 - **Everyone else** gets a role on the **Access** page (`vaa_sys.access_users`), picked by name from Workforce's staff with a company mailbox (or by typing an email). A Service Manager also gets one of Workforce's service departments. Admins have the same page in Lead Management as **User access** (`/leads/access`); CS Managers manage only their Customer Specialists, on `/access`.
 - **Leads import** (`/leads/import`, the template and upload): admins only.
-- **Test leads** (add and delete): admins only. See [Test leads](#test-leads).
+- **Customers import** (`/customers/import`, the **Template** and **Import** buttons on `/customers`): admins only. See [Importing customers](#importing-customers).
+- **Departments & services** (`/leads/departments`, `workforceOrg`): admins edit it; it changes Workforce's own data, so every system sees the change. The people allowed to see the confidential rates can open it too.
+- **Confidential rates:** per person, not per role. operations-admin@vaaphilippines.com always; others are added under User access → Confidential rates, by someone already on that list.
+- **Test leads:** admins only. See [Test leads](#test-leads).
+- **Deleting a lead** (`leads` → delete): admins only, from the bottom of the lead's page. A real lead needs its name typed to confirm, and one with payments recorded in the Accounting System can't be deleted (`lib/lead-delete.ts`). Everything attached goes with it; the activity log keeps a row saying who deleted it.
 - **Lead reports** (`/leads/reports`, read only): the Lead Manager, CS Managers, Executives, Executive Support and admins. Those without the rest of Lead Management see only the reports in its sidebar, and reach them from Customer Management's system switcher.
 - **CS Specialist scope:** customers assigned to them (`customers.assigned_specialist_email`) plus customers they cover through a running takeover. Out-of-scope customers and accounts read as "not found".
 - The rules live in `lib/permissions.ts` and `lib/access-fields.ts`, the session side in `lib/auth.ts`, and the customer scope in `lib/scope.ts`.
@@ -66,7 +74,8 @@ The roles are the legacy CMS's. What each may do is one module × role map in `l
 
 | Page | What it does |
 |---|---|
-| `/customers` | Portfolio card, customer ledger (status, CS Specialist, review and warning flags), recent activity. Filters: status, `?cs=none`, `?review=1`. |
+| `/customers` | Portfolio card, then two tables: **Leads** (records still in Lead Management: Pending and not yet New Customer Onboarded, with their phase and days in it; the first 5, and **Show all** opens the rest with `?leads=all`) and **Customers** (status, CS Specialist, review and warning flags). The customers table shows **Active** customers by default; its status chips pick another status or **All statuses** (`?status=all`), and the status filter never hides the leads table. Recent activity alongside. Other filters: `?cs=none`, `?review=1` (both show every status). Admins also get **Template** and **Import** (see [Importing customers](#importing-customers)). |
+| `/customers/import` | Admins only. Download the Customers template, upload it filled in (or a CSV saved from it), check the preview, then import. |
 | `/customers/<id>` | Status ribbon, lead phase, CS Specialist, first payment, termination/reactivation counts, warnings, takeovers, accounts, customer notes, history, status form, details form, status log. In Customer Success Handoff, a **Mark onboarded** button for the CS Manager or the customer's CS Specialist. |
 | `/accounts`, `/accounts/<id>` | Account list by status; account profile with status, category/type/country (with local time), links, contract, account managers, notes (its own and its customer's), onboarding details and tickets, history. |
 | `/specialists` | CS team portfolios, customers without a CS Specialist, transfer/assign, takeovers (cover customers for a date range). |
@@ -80,11 +89,12 @@ The roles are the legacy CMS's. What each may do is one module × role map in `l
 
 | Page | What it does |
 |---|---|
-| `/leads` | Stats card, the leads table (name and email, Customer ID, phase, Regular/Special, day, added on and by; newest first, with search) and the New-lead drawer. The phase reads as Customer Intake's step (No link yet, Link sent, Form opened, Link expired) or the phase after the form. Onboarded leads leave the list. `?stage=` filters it to one phase or step. Admins also get **Template**, **Import** and **Add test lead**. The Lead Management sidebar has Leads, Contracts, Reports and Form settings, plus User access for admins. |
+| `/leads` | Stats card, the leads table (name and email, Customer ID, phase, Regular/Special, day, added on and by; newest first, with search; every column header sorts, and **Group by phase** splits it into one section per workflow phase, both remembered in the browser) and the New-lead drawer. The phase reads as Customer Intake's step (No link yet, Link sent, Form opened, Link expired) or the phase after the form. Onboarded leads leave the list. `?stage=` filters it to one phase or step. Admins also get **Template**, **Import** and **Add test lead**. The Lead Management sidebar has Leads, Contracts, Reports and Form settings, plus Departments & services and User access for admins. |
 | `/leads/import` | Admins only. Download the Excel template, upload it filled in (or a CSV saved from it), check the preview, then import. See [Importing leads](#importing-leads). |
-| `/leads/<id>` | The workflow first: the phases in this lead's order, with Customer Intake's steps (lead added, link sent, form opened, form submitted) inside its card, the request type, the onboarding link and email (folded to one line once a link has been sent), pick and send the contract, confirm the signed contract and first payment, and the phase history. Then three tabs: **Customer information** (ID, name, email, notes, status, form, added, status log), **Account information** (company, billing and contacts from the form) and **Service requests** (tickets, sub-tickets with their request group, VA personality preference). |
+| `/leads/<id>` | The workflow first: the phases in this lead's order, with Customer Intake's steps (lead added, link sent, form opened, form submitted) inside its card, the request type, the onboarding link and email (folded to one line once a link has been sent), pick and send the contract, prepare and send the **initial bill** (see [Initial billing](#initial-billing)), confirm the signed contract and first payment, and the phase history. Then three tabs: **Customer information** (ID, name, email, notes, status, form, added, status log), **Account information** (company, billing and contacts from the form) and **Service requests** (tickets, sub-tickets with their request group, VA personality preference). Admins get **Delete this lead** at the bottom. |
 | `/leads/contracts` | Contract & Billing's contract database: the same contracts and terms as `/contracts`, which the Lead Manager can add and edit. Each contract has its ID (`CON-001`), its own terms and a Google Drive/Docs template link. |
 | `/leads/settings` | Admin-only onboarding form settings (work hour minimums). |
+| `/leads/departments` | **Departments & services** (admins, plus the people allowed to see the confidential rates). **Services:** VAA Workforce's services with their departments, and for each one a formatted **Job Description** (saved to Workforce's own field), its **Contract template**, and the **onboarding form service** it bills for. Rate viewers also see and set its **Standard Billing Rate** and **VA Base Rate** (see [Confidential service rates](#confidential-service-rates)). **Service departments:** Workforce's service-level departments only, as Workforce nests them, with status, services and people; edited and added in place, saved straight to Workforce. Nothing is deleted (a department is set Inactive, since deleting cascades through Workforce), and merged or split departments are read-only. Every change goes in the activity log. |
 | `/leads/access` | Admin-only **User access**: the same list and roles as Customer Management's `/access`. |
 | `/leads/reports` | Lead reports for a date range (last 30 or 90 days, this year, or any two days; Philippine time). **Onboarding funnel:** the leads added in the range, followed to today through link sent, form opened, form submitted and Active, with the share reaching each step and the median days between steps. **Leads over time:** new leads per week (per month for ranges over about four months), with links sent, forms submitted and links that expired unused, and a table of who added the leads. **VA demand:** VAs requested on forms submitted in the range, by service, work hour type, request group and the primary contact's region. |
 
@@ -102,7 +112,7 @@ All in `lib/lead-phase-fields.ts` and `lib/lead-phase.ts` (Nov 4, 2026). A lead'
 
 - **Special Request:** a customer who wants to meet the VA first (approved by the CEO outside the app). The Lead Manager switches the lead from Regular Request to Special Request on the lead's page, after a confirmation, only in Contract & Billing Initiation (before the contract is sent). The lead then goes straight to Customer Success Handoff. After the handoff it moves to Contract & Payment Confirmation, and it reaches New Customer Onboarded only once the contract and payment are confirmed. While it waits in Customer Success Handoff it can be switched back to Regular, which puts it back in Contract & Billing Initiation.
 - This is not the sub-tickets' **request group** (Regular, Expert, Casual), which stays per VA.
-- **Initial billing** belongs in Contract & Billing Initiation too. It will be generated and sent from the Accounting system once that exists; for now the phase moves on when the contract is sent.
+- **Initial billing** is prepared and sent in Contract & Billing Initiation, after the contract (see [Initial billing](#initial-billing)). It doesn't move the phase: the phase still moves on when the contract is sent, and the bill stays editable on the lead's page until it's marked sent.
 - **Contracts on VA connections:** some older connections follow a contract other than their account's. That arrives with VA connections in module 2 (`MODULE 2:` in `prisma/schema.prisma`).
 - A lead's status stays Pending throughout; the customer still becomes Active when a VA connection starts.
 
@@ -112,7 +122,52 @@ Admins can add a lead just to try the workflow (`lib/test-leads.ts`): **Add test
 
 - **What it makes:** "Test Lead 001" (numbered), `test-lead-001@example.com`, an onboarding link, and a sample onboarding form (one Amazon VA, weekdays 8 AM–5 PM PH time, starting in two weeks; Part 3 left for later). The form is saved by the public form's own code, so the lead lands in Contract & Billing Initiation with an account and a ticket like a real one.
 - **Marked as a test:** `customers.is_test`. Test leads are listed with a **Test** badge in both areas, but left out of Lead reports, the Leads stats card and counts, and Customer Management's counts, totals and Recent activity card (`REAL_CUSTOMERS` in `lib/customers.ts`). The Activity page and Approvals still show them.
-- **Delete:** a test lead's page has **Delete test lead** (admins, after a confirmation). It removes the lead and everything attached to it; the activity log keeps a row saying who deleted it. Real leads can't be deleted.
+- **Delete:** a test lead's page has **Delete test lead** (admins, after a confirmation, without typing the name). It removes the lead and everything attached to it, its bills and payments included; the activity log keeps a row saying who deleted it.
+- **Bills:** a test lead's initial bill shows in the Accounting System with the Test badge, and is left out of its figures.
+
+## Initial billing
+
+The first bill to a new customer, in Contract & Billing Initiation (Nov 4, 2026), following the "Initial Billing Process — Summary & Guide" doc. The maths is `computeBill()` in `lib/billing-fields.ts`, checked against the doc's two worked examples ($1,346.00, and $1,660.23 with VAT and the PayPal fee); saving and logging are in `lib/billing.ts`.
+
+1. **Prepare:** on the lead's page, **Prepare initial bill** drafts it from the service requests on the onboarding form. Each VA request starts with:
+   - its service's Standard Billing Rate (see [Confidential service rates](#confidential-service-rates)), or Accounting's fallback rate for the service, or 0 if neither is set;
+   - its first-period hours per VA. Daily hours are counted over the VA's work days from the target start date to the end of that month. Project hours are billed in full. Weekly and monthly hours are prorated by calendar day, as the legacy CMS did; the doc doesn't cover them.
+   - night differential hours: the part of a fixed schedule between 10 PM and 6 AM Philippine time. Flexible hours get none on the initial bill.
+2. **Adjust:** the Lead Manager can change:
+   - each request's rate, hours and ND hours (for example, to leave out a holiday);
+   - free hours (10 or 20) and the promo behind them;
+   - a CEO-approved deposit discount per request, and a One-Time Fee discount per department, each with its approval reference (100% waives it);
+   - the currency (USD, GBP, NIS; amounts aren't converted);
+   - VAT, which starts on for Israeli clients, and the PayPal fee, which starts on when "PayPal" was written under Other.
+
+   The bill's lines and total update as they type.
+3. **Send:** **Review and send** shows the bill email to copy or open in an email app. **Mark bill as sent** then freezes the bill: a sent bill never changes, and if it's wrong, Accounting voids it and the Lead Manager prepares a new one. A draft can be discarded.
+4. **Paid:** Accounting records the payments. The lead's page shows the bill's status, and the first payment's date prefills the Contract & payment confirmation form.
+
+How the total is worked out:
+- **One-Time Fee:** one per department (from the service, e.g. "Creatives - Video Editor" is Creatives). It isn't charged for Creatives while every Creatives VA is project-based.
+- **Deposit:** one per VA.
+- **Service Fee:** hours × rate × VAs.
+- **Night differential:** ND hours × rate × 10% × VAs.
+- **Subtotal:** those four, less the discounts and free hours (each shown as its own negative line).
+- **VAT:** 18% of the subtotal.
+- **PayPal fee:** 4.53% of the subtotal plus VAT.
+
+The fees come from Accounting → Rates & fees and the hourly rates from the services' Standard Billing Rates, and a bill keeps the ones it was made with.
+
+## Accounting System
+
+`app/(acct)/`, for Accounting (manage) and admins; CS Managers, Executives and the Lead Manager can view it. Accounting lands here.
+
+| Page | What it does |
+|---|---|
+| `/accounting` | **Bills:** still owed, paid this month, Foregone Revenue and drafts (test leads left out), then every bill (`INV-0001`) with its customer, status, total and balance. Filter by status, search by customer or bill number. |
+| `/accounting/invoices/<id>` | One bill: its lines, who prepared and sent it, the requests and fees it was worked out from, and its payments. Accounting records a payment (amount, date, method, reference), removes one recorded by mistake, or voids a sent bill that has no payments. |
+| `/accounting/payments` | Every payment recorded, newest first. |
+| `/accounting/foregone` | **Foregone Revenue:** each waived or discounted One-Time Fee or deposit, and each free-hours grant, on sent bills, with its approval reference. |
+| `/accounting/settings` | **Rates & fees:** the One-Time Fee, deposit, ND %, VAT % and PayPal %, that new bills use, and a fallback hourly rate per service for one with no Standard Billing Rate yet. |
+
+Only initial bills exist so far; monthly billing cycles (legacy BillingCycles, hours reconciliation, training bonds) are later work.
 
 ## Importing leads
 
@@ -137,6 +192,39 @@ An imported lead has no onboarding form or account:
 - Its contract is kept on the customer (`customers.contract_id`) until it has an account.
 
 Every import writes to the activity log ("Imported from <file>") and the phase history.
+
+## Importing customers
+
+Admins add or update many customers at once from Customer Management (`lib/customer-import.ts`, `/customers/import`; the template and file reading are shared with the Leads import in `lib/import-sheet.ts`):
+
+1. **Template:** the **Template** button on `/customers` downloads an Excel file built fresh each time. Status, Termination reason and CS Specialist are dropdowns of what is in the system; a "How to use" sheet explains every column (Customer ID, name, email, status, status since, status reason, termination reason, CS Specialist, first payment on, date added, notes).
+2. **Upload** (**Import**): the filled .xlsx or a CSV saved from it, up to 500 rows. Without a Customer ID a row adds a customer with a generated ID; with one it updates that customer, and blank cells keep what it has. A new customer whose name is already in vaa-sys or the legacy CMS is skipped.
+3. **Preview, then import:** every row shows what will happen or what is wrong; nothing is saved until every row is fine, and the file is checked again and saved in one transaction.
+
+Statuses follow the status form's rules:
+- **A new customer** is created in its status (Active, Paused, Inactive, Cancelled or Terminated), backdated with Status since, with a status log row. Paused, Cancelled and Terminated need a reason.
+- **A changed status** on an existing customer goes through `lib/status.ts` like any other change, so its accounts follow and the status and activity logs are written the same way. A customer waiting for a CS Manager's review can't be changed until that's resolved. Reactivating leaves its terminated or cancelled accounts for the account pages.
+- **Leads stay in Lead Management:** a new row can't be Pending, and a lead's status isn't changed here (use [Importing leads](#importing-leads)).
+
+## Confidential service rates
+
+Each Workforce service has a **Standard Billing Rate** (what the client pays per hour) and a **VA Base Rate**, both confidential (Nov 5, 2026; `lib/rates.ts`):
+- **Who sees them:** operations-admin@vaaphilippines.com always, plus anyone that account (or another rate viewer) adds under Lead Management → User access → Confidential rates. It isn't tied to a role. For everyone else, the rates are never read or sent to the page.
+- **Stored encrypted:** AES-256-GCM with a key derived from `RATES_ENCRYPTION_KEY`, each value bound to its service and field. The database, backups, logs and every developer's local copy hold only ciphertext; locally the rates show as **Locked**. Each grant on the viewers list is signed with the same key, so a row added straight in the database doesn't count.
+- **Never logged:** the activity log records that a rate changed and who changed it, never the value.
+- **Bills:** a new initial bill starts each VA at the Standard Billing Rate of the service its onboarding form service is linked to (Accounting's fallback rate when there is none). From then on, that rate is on the bill like any other line, visible to whoever prepares or reads the bill.
+- **What it can't stop:** someone who can deploy code could change the app to show the rates, so changes to `lib/rates.ts` and to who can deploy need review. Workforce's own VA pay figures (`public.departments.base_rate`, `department_memberships`) aren't covered by this.
+
+**Setting the key (once, by the rates' owner):**
+1. Generate 32 random bytes, base64. For example, on your own machine: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.
+2. In Vercel → the project → Settings → Environment Variables, add `RATES_ENCRYPTION_KEY` for Production (and Preview if previews should read them), and tick **Sensitive** so it can't be read back. Redeploy.
+3. Keep a copy somewhere safe, such as a password manager. Losing the key loses the rates, and a different key can't read rates saved with the old one (they show "Saved with a different rates key").
+
+Don't put the key in any `.env.local`: the database is shared, so it would let that machine read the live rates.
+
+## Sorting tables
+
+Every table sorts by any column (`components/ui/sortable-table.tsx`): click a header to sort, again to flip it, and a third time to go back to the table's own order (newest first, Workforce's department tree, and so on). Statuses and phases sort in workflow order, and blanks always go last. The Activity log sorts the page it shows (100 entries). A bill's own lines keep the bill's order.
 
 ## Status rules
 
@@ -184,16 +272,27 @@ The app shares va-management's Supabase Postgres but only owns the **`vaa_sys`**
 | `account_managers` | the account's managers, one row each (name, email) |
 | `contracts`, `contract_section_defs`, `contract_sections` | contract templates (with their template link), the typed terms a contract can have, and each contract's values. `accounts.contract_id` says which applies. |
 | `tickets` | main ticket per account request (`ticket_number` → TKT-000001) |
-| `app_settings` | general settings admins edit, one row per key (e.g. the work hour minimums); no row means the built-in defaults |
+| `app_settings` | general settings admins edit, one row per key (e.g. the work hour minimums, the billing fees); no row means the built-in defaults |
+| `invoices` | a bill (`invoice_number` → INV-0001): customer, account, kind (initial), status, currency, VAT and PayPal switches, the fees it was made with, subtotal/VAT/PayPal fee/total, amount paid, notes, prepared/sent/voided (when, by whom, why) |
+| `invoice_items` | each VA request on a bill: service, department, schedule type, VAs, period, hourly rate, hours and ND hours per VA (and how they were first worked out), free hours with their promo, deposit discount with its CEO approval |
+| `invoice_department_fees` | each department's One-Time Fee on a bill: exempt (Creatives project-only), discount with its CEO approval |
+| `invoice_lines` | the bill's lines as the customer sees them, rewritten on every save; reductions keep the amount foregone, its type (waived, discounted, free) and approval, which is the Foregone Revenue log |
+| `payments` | payments Accounting recorded against a bill (amount, date, method, reference, who) |
+| `billing_rates` | Accounting's fallback client hourly rate per onboarding form service, in USD, for a service with no Standard Billing Rate |
+| `service_profiles` | per Workforce service (`public.skills` id): the onboarding form service it bills for, its contract template, and its Standard Billing Rate and VA Base Rate, both encrypted |
+| `rate_viewers` | who besides the owner may see the confidential rates, each grant signed with the rates key |
 | `ticket_requests` | one sub-ticket per VA: service, schedule and hours, night differential, additional hours, task tracker, start date, tasks, tools, request group. `platform` is only set on requests made before the platforms moved to the account. |
 
 Accounts also hold status, Returning, category/type/country-region (from `setting_options`), seller onboarding link, contract link, contract and pending review.
 
-The app reads va-management's data with raw SQL and never modifies it (`lib/workforce.ts`, `lib/auth.ts`):
+The app reads va-management's data with raw SQL (`lib/workforce.ts`, `lib/auth.ts`):
 - `public.users` for sign-in and names
 - `public.customers` and `public.accounts` for legacy duplicate checks
 - `public.departments` (active SERVICE-level departments) for Service Managers and the Department list
 - `public.skills` with `public.department_skills` for the Service list
+- `public.department_memberships` for the people counts on `/leads/departments`
+
+It writes to only two things there, from `/leads/departments` (`lib/workforce-org.ts`, agreed on Nov 5, 2026): service-level rows of `public.departments`, and `public.skills.job_description`. Those writes are plain updates and inserts: no deletes, no merges or splits, timestamps in UTC like Workforce's own, and each change logged in `vaa_sys.activity_logs`. Every other `public.*` table and column is read-only.
 
 Don't run `prisma migrate` or `db push` here. Schema changes are SQL files in `prisma/sql/`:
 
@@ -215,6 +314,8 @@ npm run db:apply -- prisma/sql/<file>.sql
 - `007_lead_phases_contract_templates.sql`: lead phases and request type on `customers`, `lead_phase_logs`, `contracts.template_url`; moves leads that already submitted the form to Contract & Billing Initiation (additive only)
 - `008_lead_import.sql`: `customers.intake_completed_at` and `customers.contract_id`, for leads imported from the template (additive only)
 - `009_test_leads.sql`: `customers.is_test`, for test leads (additive only)
+- `010_accounting_initial_billing.sql`: the Accounting System's bills, their items, department fees and lines, payments and default rates (additive only)
+- `011_services_confidential_rates.sql`: `service_profiles` and `rate_viewers`, with each onboarding form service linked to its Workforce service by name (additive only; reads `public.skills`)
 
 ## Setup
 
@@ -239,6 +340,7 @@ Put these in `.env.local` at the repo root:
 | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | the Supabase project shared with va-management, for Google sign-in |
 | `NEXT_PUBLIC_SITE_URL` | the app's address; onboarding links are built from it (`http://localhost:3001` locally) |
 | `DEV_AUTH_BYPASS_EMAIL` | optional, dev only: signs you in as this Workforce user without Google |
+| `RATES_ENCRYPTION_KEY` | **Vercel only, never in `.env.local`:** 32 random bytes, base64, that encrypt the confidential service rates. Set by the rates' owner as a Sensitive variable. Without it the rates show as locked (see [Confidential service rates](#confidential-service-rates)) |
 
 ```bash
 npm run dev
@@ -273,9 +375,10 @@ There is no automated test suite yet; check changes with `typecheck`, `lint` and
 |---|---|
 | `app/(cms)/` | Customer Management pages, each with its Server Actions in `actions.ts` |
 | `app/(lms)/` | Lead Management pages |
+| `app/(acct)/` | Accounting System pages |
 | `app/(app)/` | the admin area picker and the `/waiting` page |
 | `app/onboarding/[token]/` | the public onboarding form |
-| `components/` | UI by area (`cms`, `lms`, `customers`, `leads`, `onboarding`...); `components/ui` is shadcn |
+| `components/` | UI by area (`cms`, `lms`, `acct`, `customers`, `leads`, `billing`, `import`, `onboarding`...); `components/ui` is shadcn, plus the shared `sortable-table.tsx` |
 | `lib/` | auth, permissions, scope, status rules, activity log and data access. `*-fields.ts` files are client-safe (labels, zod schemas); the rest use Prisma and are server-only |
 | `prisma/` | `schema.prisma` (the `vaa_sys` schema only) and the hand-applied SQL files in `prisma/sql/` |
 | `proxy.ts` | Next.js 16 route protection (what `middleware.ts` used to be) |
@@ -298,6 +401,6 @@ There is no automated test suite yet; check changes with `typecheck`, `lint` and
 ## Next phases (from the Oct 21 meeting)
 
 - **Ticket follow-up:** ticket statuses, account managers, and terminations through tickets.
-- **Service list:** the form uses the Google Form's service offerings (`lib/onboarding-fields.ts`). Switch to Workforce's official services and positions once database access is given.
+- **Service list:** the form uses the Google Form's service offerings (`lib/onboarding-fields.ts`). Each one is linked to a Workforce service on Departments & services (for its Standard Billing Rate); switch the form itself to Workforce's services later.
 - **Sending the onboarding email from the app,** for example through Resend, which va-management already uses.
 - **Calculations** (phase 2).

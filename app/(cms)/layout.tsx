@@ -52,6 +52,7 @@ export default async function CmsLayout({ children }: { children: React.ReactNod
       : can(r, 'leadReports')
         ? [{ label: 'Lead reports', href: '/leads/reports' }]
         : []),
+    ...(can(r, 'billing') ? [{ label: 'Accounting System', href: '/accounting' }] : []),
     ...(user.role === 'ADMIN' ? [{ label: 'All VAA systems', href: '/' }] : []),
     ...EXTERNAL_SYSTEMS,
   ]

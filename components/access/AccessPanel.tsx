@@ -5,6 +5,9 @@ import { listServiceDepartments, listStaff } from '@/lib/workforce'
 import { manilaDate } from '@/lib/customer-fields'
 import { cn } from '@/lib/utils'
 import { AddAccessForm, AccessRowControls } from '@/components/access/AccessControls'
+import { SortableTable } from '@/components/ui/sortable-table'
+import { RateViewers } from '@/components/access/RateViewers'
+import { canViewRates, listRateViewers, ratesKeySet } from '@/lib/rates'
 
 type StaffName = { email: string; name: string }
 
@@ -12,10 +15,23 @@ type StaffName = { email: string; name: string }
 // Customer Management's /access and Lead Management's /leads/access. Names
 // come from VAA Workforce; Workforce Super and System Admins are admins
 // here without a row.
-export async function AccessPanel({ user, area, title, titleClass }: { user: Actor; area: string; title: string; titleClass?: string }) {
+export async function AccessPanel({
+  user,
+  area,
+  title,
+  titleClass,
+  rateViewers = false,
+}: {
+  user: Actor
+  area: string
+  title: string
+  titleClass?: string
+  // Lead Management's User access also lists who can see the confidential rates.
+  rateViewers?: boolean
+}) {
   const grantable = grantableRoles(user.role)
 
-  const [rows, admins, departments, staff] = await Promise.all([
+  const [rows, admins, departments, staff, viewers, canManageRates] = await Promise.all([
     prisma.accessUser.findMany({ orderBy: [{ isActive: 'desc' }, { role: 'asc' }, { email: 'asc' }] }),
     prisma.$queryRaw<StaffName[]>`
       SELECT email, trim(first_name || ' ' || last_name) AS name
@@ -26,10 +42,12 @@ export async function AccessPanel({ user, area, title, titleClass }: { user: Act
       ORDER BY first_name`,
     listServiceDepartments(),
     listStaff(ADMIN_EMAIL_DOMAIN),
+    rateViewers ? listRateViewers() : Promise.resolve([]),
+    rateViewers ? canViewRates(user.email) : Promise.resolve(false),
   ])
   const departmentName = new Map(departments.map((d) => [d.id, d.name]))
   const nameOf = new Map(staff.map((s) => [s.email, s.name]))
-  const missing = rows.map((r) => r.email).filter((e) => !nameOf.has(e))
+  const missing = [...rows.map((r) => r.email), ...viewers.map((v) => v.email)].filter((e) => !nameOf.has(e))
   if (missing.length) {
     const more = await prisma.$queryRaw<StaffName[]>`
       SELECT lower(email) AS email, trim(first_name || ' ' || last_name) AS name
@@ -75,17 +93,21 @@ export async function AccessPanel({ user, area, title, titleClass }: { user: Act
       <section className="space-y-3">
         <h2 className="font-semibold">People with access</h2>
         <div className="overflow-x-auto rounded-2xl border bg-card">
-          <table className="w-full text-sm">
-            <thead className="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
-              <tr>
-                <th className="px-4 py-2.5 font-medium">Person</th>
-                <th className="px-4 py-2.5 font-medium">Role</th>
-                <th className="hidden px-4 py-2.5 font-medium md:table-cell">Added</th>
-                <th className="px-4 py-2.5" />
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {admins.map((a) => (
+          <SortableTable
+            className="w-full text-sm"
+            theadClassName="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground"
+            tbodyClassName="divide-y"
+            columns={[
+              { key: 'person', label: 'Person', className: 'px-4 py-2.5 font-medium' },
+              { key: 'role', label: 'Role', className: 'px-4 py-2.5 font-medium' },
+              { key: 'added', label: 'Added', firstDir: 'desc', className: 'hidden px-4 py-2.5 font-medium md:table-cell' },
+              { key: 'actions', label: <span className="sr-only">Change</span>, sortable: false, className: 'px-4 py-2.5' },
+            ]}
+            rows={[
+              ...admins.map((a) => ({
+                id: `admin-${a.email}`,
+                values: { person: a.name || a.email, role: ROLE_LABELS.ADMIN, added: null },
+                node: (
                 <tr key={`admin-${a.email}`} className="text-muted-foreground">
                   <td className="px-4 py-3">
                     <p className="font-medium text-foreground">{a.name}</p>
@@ -95,8 +117,12 @@ export async function AccessPanel({ user, area, title, titleClass }: { user: Act
                   <td className="hidden px-4 py-3 text-xs md:table-cell">From VAA Workforce (Super/System Admin)</td>
                   <td className="px-4 py-3" />
                 </tr>
-              ))}
-              {rows.map((r) => (
+                ),
+              })),
+              ...rows.map((r) => ({
+                id: r.id,
+                values: { person: nameOf.get(r.email) ?? r.email, role: ROLE_LABELS[r.role], added: r.createdAt },
+                node: (
                 <tr key={r.id} className={r.isActive ? '' : 'opacity-60'}>
                   <td className="px-4 py-3">
                     <p className="font-medium">{nameOf.get(r.email) ?? r.email}</p>
@@ -124,11 +150,28 @@ export async function AccessPanel({ user, area, title, titleClass }: { user: Act
                     )}
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+                ),
+              })),
+            ]}
+          />
         </div>
       </section>
+
+      {rateViewers && (
+        <RateViewers
+          viewers={viewers.map((v) => ({
+            email: v.email,
+            name: nameOf.get(v.email) || v.email,
+            owner: v.owner,
+            valid: v.valid,
+            grantedBy: v.grantedByEmail,
+            grantedOn: v.grantedAt ? v.grantedAt.toLocaleDateString('en-PH', manilaDate) : null,
+          }))}
+          people={staff.map((s) => ({ email: s.email, name: s.name || s.email }))}
+          canManage={canManageRates}
+          keySet={ratesKeySet()}
+        />
+      )}
     </main>
   )
 }

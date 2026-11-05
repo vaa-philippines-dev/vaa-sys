@@ -5,6 +5,7 @@ import { SignOutButton } from '@/components/layout/SignOutButton'
 import { NavLinks } from '@/components/layout/NavLinks'
 import { requireSignedIn, displayName } from '@/lib/auth'
 import { canUse, homeFor, ROLE_LABELS } from '@/lib/access-fields'
+import { can } from '@/lib/permissions'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireSignedIn()
@@ -12,6 +13,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const links = [
     canUse(user.role, 'customers') && { href: '/customers', label: 'Customers' },
     canUse(user.role, 'leads') && { href: '/leads', label: 'Leads' },
+    can(user.role, 'billing') && { href: '/accounting', label: 'Accounting' },
     canUse(user.role, 'access') && { href: '/access', label: 'Access' },
   ].filter((l): l is { href: string; label: string } => !!l)
 

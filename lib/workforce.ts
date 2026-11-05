@@ -1,7 +1,9 @@
 import { prisma } from '@/lib/prisma'
 
 // Read-only links to VAA Workforce (va-management) data, always raw SQL —
-// never Prisma models (see the top of prisma/schema.prisma).
+// never Prisma models (see the top of prisma/schema.prisma). The only writes
+// to Workforce (service departments and services' job descriptions) are in
+// lib/workforce-org.ts.
 //
 // Departments and services are Workforce's, not copied into vaa_sys:
 // - a department is a client-facing service department in

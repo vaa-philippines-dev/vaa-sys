@@ -12,6 +12,7 @@ import { requireSignedIn, displayName } from '@/lib/auth'
 import { canUse, homeFor, ROLE_LABELS } from '@/lib/access-fields'
 import { can } from '@/lib/permissions'
 import { listLeads } from '@/lib/customers'
+import { canViewRates } from '@/lib/rates'
 
 // Lead Management keeps the original lead-management-sys design: sidebar
 // layout and the .lms palette (app/globals.css). Everything else in vaa-sys
@@ -24,13 +25,17 @@ export default async function LmsLayout({ children }: { children: React.ReactNod
   const user = await requireSignedIn('/leads')
   const board = canUse(user.role, 'leads')
   const reports = can(user.role, 'leadReports')
-  if (!board && !reports) redirect(homeFor(user.role))
-  const home = board ? '/leads' : '/leads/reports'
+  // Someone allowed to see the confidential service rates gets Departments &
+  // services even without the rest of Lead Management.
+  const departments = can(user.role, 'workforceOrg') || (await canViewRates(user.email))
+  if (!board && !reports && !departments) redirect(homeFor(user.role))
+  const home = board ? '/leads' : reports ? '/leads/reports' : '/leads/departments'
 
   const leads = board ? await listLeads() : []
 
   const others: SystemLink[] = [
     ...(canUse(user.role, 'customers') ? [{ label: 'Customer Management', href: '/customers' }] : []),
+    ...(can(user.role, 'billing') ? [{ label: 'Accounting System', href: '/accounting' }] : []),
     ...(user.role === 'ADMIN' ? [{ label: 'All VAA systems', href: '/' }] : []),
     ...EXTERNAL_SYSTEMS,
   ]
@@ -54,6 +59,7 @@ export default async function LmsLayout({ children }: { children: React.ReactNod
               showContracts={can(user.role, 'contracts')}
               showReports={reports}
               showSettings={can(user.role, 'settings', 'update')}
+              showDepartments={departments}
               showAccess={can(user.role, 'userAccess')}
             />
           </Suspense>

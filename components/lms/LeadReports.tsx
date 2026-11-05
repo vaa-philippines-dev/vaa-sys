@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
+import { SortableTable } from '@/components/ui/sortable-table'
 import { RANGE_PRESETS, type DemandRow, type FunnelStep, type PeriodRow, type RangePreset, type ReportRange } from '@/lib/lead-reports'
 import { cn } from '@/lib/utils'
 
@@ -133,18 +134,22 @@ export function PeriodTable({ periods, unit }: { periods: PeriodRow[]; unit: Rep
     <details className="group text-sm">
       <summary className="cursor-pointer text-[13px] font-medium text-muted-foreground hover:text-foreground">Show the numbers per {unit}</summary>
       <div className="mt-3 overflow-x-auto">
-        <table className="w-full min-w-[480px] text-left text-[13px]">
-          <thead className="text-[12px] text-muted-foreground">
-            <tr className="border-b">
-              <th className="py-2 pr-4 font-medium">{unit === 'week' ? 'Week of' : 'Month'}</th>
-              <th className="py-2 pr-4 text-right font-medium">New leads</th>
-              <th className="py-2 pr-4 text-right font-medium">Links sent</th>
-              <th className="py-2 pr-4 text-right font-medium">Forms submitted</th>
-              <th className="py-2 text-right font-medium">Links expired unused</th>
-            </tr>
-          </thead>
-          <tbody className="tabular-nums">
-            {periods.map((p) => (
+        <SortableTable
+          className="w-full min-w-[480px] text-left text-[13px]"
+          theadClassName="text-[12px] text-muted-foreground"
+          headRowClassName="border-b"
+          tbodyClassName="tabular-nums"
+          columns={[
+            { key: 'period', label: unit === 'week' ? 'Week of' : 'Month', className: 'py-2 pr-4 font-medium' },
+            { key: 'newLeads', label: 'New leads', align: 'right', firstDir: 'desc', className: 'py-2 pr-4 font-medium' },
+            { key: 'linksSent', label: 'Links sent', align: 'right', firstDir: 'desc', className: 'py-2 pr-4 font-medium' },
+            { key: 'formsSubmitted', label: 'Forms submitted', align: 'right', firstDir: 'desc', className: 'py-2 pr-4 font-medium' },
+            { key: 'linksExpired', label: 'Links expired unused', align: 'right', firstDir: 'desc', className: 'py-2 font-medium' },
+          ]}
+          rows={periods.map((p, i) => ({
+            id: p.key,
+            values: { period: i, newLeads: p.newLeads, linksSent: p.linksSent, formsSubmitted: p.formsSubmitted, linksExpired: p.linksExpired },
+            node: (
               <tr key={p.key} className="border-b last:border-0">
                 <td className="py-2 pr-4">{p.label}</td>
                 <td className="py-2 pr-4 text-right">{p.newLeads}</td>
@@ -152,9 +157,9 @@ export function PeriodTable({ periods, unit }: { periods: PeriodRow[]; unit: Rep
                 <td className="py-2 pr-4 text-right">{p.formsSubmitted}</td>
                 <td className="py-2 text-right">{p.linksExpired}</td>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            ),
+          }))}
+        />
       </div>
     </details>
   )

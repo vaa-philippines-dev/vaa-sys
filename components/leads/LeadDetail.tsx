@@ -4,7 +4,7 @@ import { AccountInfoCards, ServiceRequestCards } from '@/components/customers/Ac
 import { LeadWorkflow } from '@/components/leads/LeadWorkflow'
 import { LeadTabs } from '@/components/leads/LeadTabs'
 import { OnboardingLinkPanel } from '@/components/leads/OnboardingLinkPanel'
-import { DeleteTestLead } from '@/components/leads/DeleteTestLead'
+import { DeleteLead } from '@/components/leads/DeleteLead'
 import { TestBadge } from '@/components/leads/TestBadge'
 import { COLUMN_META, STAGE_META, boardColumnOf, initialsFrom } from '@/components/lms/stage-meta'
 import { STATUS_META } from '@/components/cms/status-meta'
@@ -14,6 +14,7 @@ import { onboardingEmail, onboardingUrl } from '@/lib/onboarding'
 import { cn } from '@/lib/utils'
 import type { getCustomer } from '@/lib/customers'
 import type { ContractChoice } from '@/lib/contracts'
+import type { InitialBillView } from '@/lib/billing-view'
 
 type Customer = NonNullable<Awaited<ReturnType<typeof getCustomer>>>
 
@@ -27,15 +28,18 @@ export function LeadDetail({
   choices,
   senderName,
   canEdit,
-  canDeleteTest,
+  canDelete,
   addedByName,
+  bill,
 }: {
   customer: Customer
   choices: ContractChoice[]
   senderName: string
   canEdit: boolean
-  canDeleteTest: boolean
+  // Admins: delete the lead for good.
+  canDelete: boolean
   addedByName: string
+  bill: InitialBillView
 }) {
   const now = new Date()
   const liveLink = customer.onboardingLinks.find((l) => !l.revokedAt && !l.submittedAt && l.expiresAt > now) ?? null
@@ -143,12 +147,12 @@ export function LeadDetail({
         {customer.isTest && (
           <div className="flex basis-full flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed px-4 py-2.5 text-sm text-muted-foreground">
             <p>Test lead: left out of reports and counts.</p>
-            {canDeleteTest && <DeleteTestLead customerId={customer.id} name={customer.name} />}
+            {canDelete && <DeleteLead customerId={customer.id} name={customer.name} isTest />}
           </div>
         )}
       </header>
 
-      <LeadWorkflow customer={customer} choices={choices} senderName={senderName} canEdit={canEdit} intake={onboardingLink} />
+      <LeadWorkflow customer={customer} choices={choices} senderName={senderName} canEdit={canEdit} intake={onboardingLink} bill={bill} />
 
       <LeadTabs
         tabs={[
@@ -162,6 +166,16 @@ export function LeadDetail({
           },
         ]}
       />
+
+      {canDelete && !customer.isTest && (
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-destructive/40 px-4 py-3 text-sm">
+          <div>
+            <p className="font-medium">Delete this lead</p>
+            <p className="text-muted-foreground">Removes {customer.name} and everything attached to it for good. Admins only.</p>
+          </div>
+          <DeleteLead customerId={customer.id} name={customer.name} isTest={false} />
+        </section>
+      )}
     </div>
   )
 }

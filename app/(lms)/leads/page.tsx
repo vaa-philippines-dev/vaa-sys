@@ -25,6 +25,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
       special: l.requestType === 'SPECIAL',
       day: dayOf(l.createdAt, now),
       addedOn: l.createdAt.toLocaleDateString('en-PH', manilaDate),
+      addedAt: l.createdAt.toISOString(),
       addedBy: names.get(l.createdByEmail.toLowerCase()) ?? l.createdByEmail,
       test: l.isTest,
     }))

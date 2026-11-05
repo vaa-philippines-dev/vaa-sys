@@ -2,6 +2,9 @@ import { Check, Circle, ExternalLink, Mail } from 'lucide-react'
 import { buttonVariants } from '@/components/ui/button'
 import { CopyButton } from '@/components/leads/OnboardingLinkPanel'
 import { ConfirmContractForm, ContractPicker, MarkContractSent, RequestTypeSwitch } from '@/components/leads/LeadWorkflowControls'
+import { InitialBill } from '@/components/leads/InitialBill'
+import { INVOICE_STATUS_LABELS, formatMoney } from '@/lib/billing-fields'
+import type { InitialBillView } from '@/lib/billing-view'
 import { cn } from '@/lib/utils'
 import { dayString, manilaDate, manilaDateTime } from '@/lib/customer-fields'
 import { formatSectionValue } from '@/lib/contract-fields'
@@ -24,21 +27,23 @@ function firstDate(dates: (Date | null)[]): Date | null {
 // Lead Management's workflow on the lead's page: the phases in the order
 // this lead goes through them (Customer Intake with its onboarding steps),
 // the request type, then what the current phase needs (pick and send the
-// contract, confirm the signed contract and first payment). `intake` (the
-// onboarding link) goes right under the phases. The CS team's handoff
-// happens in Customer Management.
+// contract, prepare and send the initial bill, confirm the signed contract
+// and first payment). `intake` (the onboarding link) goes right under the
+// phases. The CS team's handoff happens in Customer Management.
 export function LeadWorkflow({
   customer,
   choices,
   senderName,
   canEdit,
   intake,
+  bill,
 }: {
   customer: Customer
   choices: ContractChoice[]
   senderName: string
   canEdit: boolean
   intake?: React.ReactNode
+  bill: InitialBillView
 }) {
   // An imported lead can be past Customer Intake without the form.
   const formSubmitted = customer.submissions.length > 0 || !!customer.intakeCompletedAt
@@ -71,6 +76,9 @@ export function LeadWorkflow({
     : null
   const mailto = email ? `mailto:${encodeURIComponent(customer.email ?? '')}?subject=${encodeURIComponent(email.subject)}&body=${encodeURIComponent(email.body)}` : null
   const confirmed = !!customer.contractConfirmedAt
+  // The first payment Accounting recorded on the initial bill prefills the
+  // confirmation's payment date.
+  const firstPaid = bill.invoice?.payments[0]?.paidOn ?? null
   const sentOther = !!customer.contractSentAt && !!contractId && customer.contractSentId !== contractId
   // Special Request is chosen in Contract & Billing Initiation only, before
   // the contract goes out. A Special Request lead goes straight to Customer
@@ -222,8 +230,18 @@ export function LeadWorkflow({
             )}
             {canEdit && !confirmed && contract && (!customer.contractSentAt || sentOther) && <MarkContractSent customerId={customer.id} again={!!customer.contractSentAt} />}
           </div>
-          <p className="text-xs text-muted-foreground">Initial billing will be generated and sent from the Accounting system once it is connected.</p>
         </section>
+      )}
+
+      {formSubmitted && (
+        <InitialBill
+          customerId={customer.id}
+          customerName={customer.name}
+          senderName={senderName}
+          hasRequests={customer.accounts.some((a) => a.tickets.some((t) => t.requests.length > 0))}
+          canEdit={canEdit}
+          bill={bill}
+        />
       )}
 
       {customer.contractSentAt && (
@@ -232,6 +250,13 @@ export function LeadWorkflow({
             <h2 className="text-base font-semibold">Contract &amp; payment confirmation</h2>
             <p className="text-sm text-muted-foreground">When the customer has signed the contract and made their first payment.</p>
           </div>
+          {bill.invoice && bill.invoice.status !== 'DRAFT' && (
+            <p className="text-sm">
+              Initial bill {bill.invoice.code}: {INVOICE_STATUS_LABELS[bill.invoice.status]}
+              {bill.invoice.amountPaid > 0 && `, ${formatMoney(bill.invoice.amountPaid, bill.invoice.currency)} of ${formatMoney(bill.invoice.total, bill.invoice.currency)} paid`}
+              {firstPaid && ` (first payment ${day(new Date(`${firstPaid}T00:00:00+08:00`))})`}.
+            </p>
+          )}
           {confirmed ? (
             <p className="text-sm">
               Confirmed {when(customer.contractConfirmedAt!)} by {customer.contractConfirmedByEmail}
@@ -239,7 +264,7 @@ export function LeadWorkflow({
               {customer.paymentDate && ` · first payment ${day(customer.paymentDate)}`}.
             </p>
           ) : canEdit ? (
-            <ConfirmContractForm customerId={customer.id} paymentDate={customer.paymentDate && !customer.noPaymentYet ? dayString(customer.paymentDate) : null} />
+            <ConfirmContractForm customerId={customer.id} paymentDate={customer.paymentDate && !customer.noPaymentYet ? dayString(customer.paymentDate) : firstPaid} />
           ) : (
             <p className="text-sm text-muted-foreground">Not confirmed yet.</p>
           )}

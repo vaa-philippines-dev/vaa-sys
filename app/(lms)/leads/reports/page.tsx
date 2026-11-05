@@ -1,5 +1,6 @@
 import { BarList, FunnelChart, PeriodChart, PeriodTable, RangeFilter, ReportSection, Stat } from '@/components/lms/LeadReports'
 import { requireCan } from '@/lib/auth'
+import { SortableTable } from '@/components/ui/sortable-table'
 import { manilaDate, dateOnly } from '@/lib/customer-fields'
 import { leadReport, parseRange } from '@/lib/lead-reports'
 
@@ -55,17 +56,21 @@ export default async function LeadReportsPage({ searchParams }: { searchParams: 
             <p className="text-[13px] text-muted-foreground">No leads were added in this range.</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[420px] text-left text-[13px]">
-                <thead className="text-[12px] text-muted-foreground">
-                  <tr className="border-b">
-                    <th className="py-2 pr-4 font-medium">Added by</th>
-                    <th className="py-2 pr-4 text-right font-medium">Leads</th>
-                    <th className="py-2 pr-4 text-right font-medium">Forms submitted</th>
-                    <th className="py-2 text-right font-medium">Became Active</th>
-                  </tr>
-                </thead>
-                <tbody className="tabular-nums">
-                  {report.adders.map((a) => (
+              <SortableTable
+                className="w-full min-w-[420px] text-left text-[13px]"
+                theadClassName="text-[12px] text-muted-foreground"
+                headRowClassName="border-b"
+                tbodyClassName="tabular-nums"
+                columns={[
+                  { key: 'name', label: 'Added by', className: 'py-2 pr-4 font-medium' },
+                  { key: 'added', label: 'Leads', align: 'right', firstDir: 'desc', className: 'py-2 pr-4 font-medium' },
+                  { key: 'submitted', label: 'Forms submitted', align: 'right', firstDir: 'desc', className: 'py-2 pr-4 font-medium' },
+                  { key: 'active', label: 'Became Active', align: 'right', firstDir: 'desc', className: 'py-2 font-medium' },
+                ]}
+                rows={report.adders.map((a) => ({
+                  id: a.email,
+                  values: { name: a.name, added: a.added, submitted: a.submitted, active: a.active },
+                  node: (
                     <tr key={a.email} className="border-b last:border-0">
                       <td className="py-2 pr-4" title={a.email}>
                         {a.name}
@@ -74,9 +79,9 @@ export default async function LeadReportsPage({ searchParams }: { searchParams: 
                       <td className="py-2 pr-4 text-right">{a.submitted}</td>
                       <td className="py-2 text-right">{a.active}</td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  ),
+                }))}
+              />
             </div>
           )}
         </div>

@@ -38,11 +38,11 @@ export const ROLE_DESCRIPTIONS: Record<AccessRole, string> = {
   ADMIN: 'Everything, including access and settings.',
   CS_MANAGER: 'All customers and accounts, approvals, CS Specialists, contracts, the activity log and lead reports. Adds or removes Customer Specialists.',
   CUSTOMER_SPECIALIST: 'Their own customers and accounts, plus customers they are covering.',
-  LEAD_MANAGER: 'Lead Management, including contracts and lead reports. Can view customers.',
+  LEAD_MANAGER: 'Lead Management, including contracts, initial bills and lead reports. Can view customers and the Accounting System.',
   SERVICE_MANAGER: 'Views customers and accounts. Service requests and VA connections for their department arrive with later modules.',
   HR_SPECIALIST: 'VA rates and HR work, arriving with later modules.',
   HR_MANAGER: 'VA rates and HR work, arriving with later modules.',
-  ACCOUNTING: 'Views customers, accounts and contracts. Billing arrives with a later module.',
+  ACCOUNTING: 'The Accounting System: bills, payments, Foregone Revenue, rates and fees. Views customers, accounts and contracts.',
   RECRUITMENT_SPECIALIST: 'Recruitment stages of service requests, arriving with a later module.',
   TRAINING_MANAGER: 'Training stages of service requests, arriving with a later module.',
   EXECUTIVE: 'Views customers, accounts, contracts, the activity log and lead reports.',
@@ -74,6 +74,7 @@ export function grantableRoles(role: AccessRole | null | undefined): AccessRole[
 export function homeFor(role: AccessRole): string {
   if (role === 'ADMIN') return '/'
   if (role === 'LEAD_MANAGER') return '/leads'
+  if (role === 'ACCOUNTING') return '/accounting'
   if (can(role, 'customers', 'read')) return '/customers'
   // Roles whose own pages arrive with later modules.
   return '/waiting'

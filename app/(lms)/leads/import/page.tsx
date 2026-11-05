@@ -1,7 +1,8 @@
 import Link from 'next/link'
 import { ArrowLeft, Download } from 'lucide-react'
 import { requireCan } from '@/lib/auth'
-import { LeadImport } from '@/components/leads/LeadImport'
+import { ImportUpload } from '@/components/import/ImportUpload'
+import { applyLeadImport, previewLeadImport } from './actions'
 import { IMPORT_COLUMNS, IMPORT_MAX_ROWS } from '@/lib/lead-import-fields'
 
 // Admins: add or update leads in bulk from the Excel template.
@@ -44,7 +45,7 @@ export default async function LeadImportPage() {
         </details>
       </section>
 
-      <LeadImport />
+      <ImportUpload check={previewLeadImport} save={applyLeadImport} record="lead" detail="Phase" doneHref="/leads" />
     </main>
   )
 }

@@ -34,13 +34,22 @@ export const MODULES = [
   // The Leads Excel template and upload (/leads/import): adds and updates
   // leads at any phase. Admins only.
   'leadImport',
-  // Test leads (lib/test-leads.ts): add a lead with a sample onboarding form,
-  // and delete test leads. Admins only.
+  // The Customers Excel template and upload (/customers/import): adds and
+  // updates customers, statuses included. Admins only.
+  'customerImport',
+  // Test leads (lib/test-leads.ts): add a lead with a sample onboarding form.
+  // Admins only. Deleting any lead is leads → delete (also admins only).
   'testLeads',
   // Lead Management's User access page (/leads/access), the same list as
   // Customer Management's Access page. Admins only; CS Managers keep their
   // own team on /access.
   'userAccess',
+  // Lead Management's Departments & services page (/leads/departments):
+  // VAA Workforce's service departments and services, edited in place
+  // (lib/workforce-org.ts). Admins only, since every Workforce page uses them.
+  // The services' confidential rates aren't a role grant: they're per person
+  // (lib/rates.ts), and those people can open the page for them.
+  'workforceOrg',
   // Later modules. Defaults follow the legacy grid; each module confirms
   // them when it is built.
   'serviceRequests',
@@ -51,6 +60,9 @@ export const MODULES = [
   'meetings',
   'followUps',
   'playbook',
+  // The Accounting System (/accounting): bills, payments, Foregone Revenue,
+  // and the rates and fees a bill starts from (update). The Lead Manager
+  // prepares a lead's initial bill as a leads update instead.
   'billing',
   'reports',
 ] as const
@@ -97,13 +109,16 @@ const GRID: Record<Module, Partial<Record<AccessRole, Grant>>> = {
   activityLogs: { CS_MANAGER: R, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
   // CS Managers only grant the Customer Specialist role (grantableRoles).
   access: { CS_MANAGER: CRU },
+  // No delete for anyone but admins: deleting a lead removes it for good.
   leads: { LEAD_MANAGER: CRU },
   // The Lead Manager, plus the managers who follow the pipeline. Read only:
   // the reports never change anything.
   leadReports: { LEAD_MANAGER: R, CS_MANAGER: R, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
   leadImport: {},
+  customerImport: {},
   testLeads: {},
   userAccess: {},
+  workforceOrg: {},
 
   serviceRequests: {
     CS_MANAGER: CRUD,
@@ -157,7 +172,8 @@ const GRID: Record<Module, Partial<Record<AccessRole, Grant>>> = {
   meetings: { CS_MANAGER: CRUD, CUSTOMER_SPECIALIST: CRU, SERVICE_MANAGER: CRUD, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
   followUps: { CS_MANAGER: CRUD, CUSTOMER_SPECIALIST: CRUD },
   playbook: { CS_MANAGER: CRUD, CUSTOMER_SPECIALIST: CRU, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
-  billing: { ACCOUNTING: CRUD, CS_MANAGER: R, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
+  // The Lead Manager reads it to follow a lead's bill after sending it.
+  billing: { ACCOUNTING: CRUD, CS_MANAGER: R, LEAD_MANAGER: R, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
   reports: { CS_MANAGER: R, SERVICE_MANAGER: R, HR_MANAGER: R, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
 }
 

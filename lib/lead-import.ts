@@ -1,10 +1,9 @@
-import ExcelJS from 'exceljs'
 import { prisma } from '@/lib/prisma'
 import type { Prisma } from '@/src/generated/prisma/client'
 import { fieldChanges, logActivity } from '@/lib/activity'
 import type { Actor } from '@/lib/auth'
 import { findCustomerMatches, generateCustomerCode } from '@/lib/customers'
-import { dateOnly, dayString, manilaStartOf, manilaToday } from '@/lib/customer-fields'
+import { dateOnly, manilaStartOf, manilaToday } from '@/lib/customer-fields'
 import { syncLeadPhase } from '@/lib/lead-phase'
 import { LEAD_PHASES, PHASE_LABELS, REQUEST_TYPES, REQUEST_TYPE_LABELS, leadPhaseFor, type LeadPhase, type LeadRequestType } from '@/lib/lead-phase-fields'
 import {
@@ -14,12 +13,13 @@ import {
   type ImportAction,
   type ImportColumnKey,
   type ImportPreview,
-  type ImportRow,
   type ImportRowResult,
 } from '@/lib/lead-import-fields'
 import { listCsTeam } from '@/lib/specialists'
+import { buildTemplate, emailFromLabel, parseDay, readSheet, teamLabel, type ReadRow as ReadSheetRow } from '@/lib/import-sheet'
 
-// Server-only: the Leads import (Nov 4, 2026). Admins download an Excel
+// Server-only: the Leads import (Nov 4, 2026). The template and file reading
+// it shares with the Customers import are in lib/import-sheet.ts. Admins download an Excel
 // template whose Phase, Request type, CS Specialist and Contract columns are
 // dropdowns of what is in the system, fill it in, and upload it (or a CSV
 // saved from it). Each row adds a new lead (no Customer ID) or updates the
@@ -52,63 +52,23 @@ async function importLists() {
 }
 
 const contractLabel = (c: { contractCode: string; name: string }) => `${c.contractCode} · ${c.name}`
-const teamLabel = (m: { name: string; email: string }) => (m.name && m.name !== m.email ? `${m.name} <${m.email}>` : m.email)
 
 // ── Template ──────────────────────────────────────────────────────
 
 export async function buildImportTemplate(): Promise<Buffer> {
   const { contracts, team } = await importLists()
-  const wb = new ExcelJS.Workbook()
-  wb.creator = 'vaa-sys'
-  wb.created = new Date()
-
-  const ws = wb.addWorksheet('Leads', { views: [{ state: 'frozen', ySplit: 1 }] })
-  ws.columns = IMPORT_COLUMNS.map((c) => ({ header: c.header, key: c.key, width: c.width }))
-  const header = ws.getRow(1)
-  header.font = { bold: true }
-  header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFEDE7' } }
-  IMPORT_COLUMNS.forEach((c, i) => {
-    header.getCell(i + 1).note = c.note
-  })
-
-  // The lists the dropdowns read, on a hidden sheet.
-  const lists = wb.addWorksheet('Lists', { state: 'hidden' })
-  const listColumns: { key: ImportColumnKey; title: string; values: string[] }[] = [
-    { key: 'phase', title: 'Phase', values: LEAD_PHASES.map((p) => PHASE_LABELS[p]) },
-    { key: 'requestType', title: 'Request type', values: REQUEST_TYPES.map((t) => REQUEST_TYPE_LABELS[t]) },
-    { key: 'csSpecialist', title: 'CS Specialist', values: team.map(teamLabel) },
-    { key: 'contract', title: 'Contract', values: contracts.map(contractLabel) },
-  ]
-  listColumns.forEach((l, i) => {
-    const col = i + 1
-    lists.getCell(1, col).value = l.title
-    l.values.forEach((v, j) => (lists.getCell(j + 2, col).value = v))
-  })
-
-  for (const [i, l] of listColumns.entries()) {
-    if (l.values.length === 0) continue
-    const letter = String.fromCharCode(65 + i)
-    const range = `Lists!$${letter}$2:$${letter}$${l.values.length + 1}`
-    const col = IMPORT_COLUMNS.findIndex((c) => c.key === l.key) + 1
-    for (let r = 2; r <= IMPORT_MAX_ROWS + 1; r++) {
-      ws.getCell(r, col).dataValidation = {
-        type: 'list',
-        allowBlank: true,
-        formulae: [range],
-        showErrorMessage: true,
-        errorStyle: 'stop',
-        errorTitle: `Pick a ${l.title.toLowerCase()}`,
-        error: `Choose a ${l.title.toLowerCase()} from the list.`,
-      }
-    }
-  }
-  for (const key of DATE_COLUMNS) {
-    ws.getColumn(key).numFmt = 'yyyy-mm-dd'
-  }
-
-  const help = wb.addWorksheet('How to use')
-  help.getColumn(1).width = 110
-  ;[
+  return buildTemplate({
+    sheet: 'Leads',
+    columns: IMPORT_COLUMNS,
+    lists: [
+      { key: 'phase', title: 'Phase', values: LEAD_PHASES.map((p) => PHASE_LABELS[p]) },
+      { key: 'requestType', title: 'Request type', values: REQUEST_TYPES.map((t) => REQUEST_TYPE_LABELS[t]) },
+      { key: 'csSpecialist', title: 'CS Specialist', values: team.map(teamLabel) },
+      { key: 'contract', title: 'Contract', values: contracts.map(contractLabel) },
+    ],
+    dateKeys: DATE_COLUMNS,
+    maxRows: IMPORT_MAX_ROWS,
+    help: [
     'VAA Systems: Leads import template',
     '',
     'Fill in one row per lead on the Leads sheet, then upload the file on Lead Management → Import. You see a preview before anything is saved.',
@@ -119,142 +79,19 @@ export async function buildImportTemplate(): Promise<Buffer> {
     'A Special Request skips Contract & Billing Initiation: it goes to Customer Success Handoff, then Contract & Payment Confirmation.',
     'Dates are Philippine calendar days (YYYY-MM-DD) and can\'t be in the future. Up to 500 rows per file.',
     'A new lead whose name is already in vaa-sys or the legacy CMS is skipped; put its Customer ID to update it instead.',
-    '',
-    'Columns:',
-    ...IMPORT_COLUMNS.map((c) => `• ${c.header}: ${c.note}`),
-  ].forEach((line, i) => (help.getCell(i + 1, 1).value = line))
-  help.getRow(1).font = { bold: true, size: 13 }
-
-  return Buffer.from(await wb.xlsx.writeBuffer())
+    ],
+  })
 }
 
 // ── Reading an upload ─────────────────────────────────────────────
 
-type ReadRow = { row: number; values: ImportRow }
-
-function headerKey(text: string): ImportColumnKey | null {
-  const t = text.trim().toLowerCase().replace(/\s*\*$/, '')
-  return IMPORT_COLUMNS.find((c) => c.header.toLowerCase() === t || c.key.toLowerCase() === t)?.key ?? null
-}
-
-// Excel stores dates as day counts from 1899-12-30.
-function excelSerialDay(n: number) {
-  return dayString(new Date(Date.UTC(1899, 11, 30) + Math.round(n) * 86_400_000))
-}
-
-function cellString(cell: ExcelJS.Cell, isDate: boolean): string {
-  const v = cell.value
-  if (v instanceof Date) return dayString(v)
-  if (isDate && typeof v === 'number') return excelSerialDay(v)
-  if (v && typeof v === 'object' && 'result' in v) {
-    const r = (v as { result?: unknown }).result
-    if (r instanceof Date) return dayString(r)
-    if (isDate && typeof r === 'number') return excelSerialDay(r)
-  }
-  return (cell.text ?? '').trim()
-}
-
-// RFC 4180-ish: quoted fields, doubled quotes, commas and newlines inside quotes.
-function parseCsv(text: string): string[][] {
-  const rows: string[][] = []
-  let row: string[] = []
-  let field = ''
-  let quoted = false
-  const s = text.replace(/^﻿/, '')
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i]
-    if (quoted) {
-      if (ch === '"' && s[i + 1] === '"') {
-        field += '"'
-        i++
-      } else if (ch === '"') quoted = false
-      else field += ch
-    } else if (ch === '"') quoted = true
-    else if (ch === ',') {
-      row.push(field)
-      field = ''
-    } else if (ch === '\n' || ch === '\r') {
-      if (ch === '\r' && s[i + 1] === '\n') i++
-      row.push(field)
-      rows.push(row)
-      row = []
-      field = ''
-    } else field += ch
-  }
-  if (field !== '' || row.length) {
-    row.push(field)
-    rows.push(row)
-  }
-  return rows
-}
-
-function toRows(headers: (ImportColumnKey | null)[], data: { row: number; cells: string[] }[]): ReadRow[] {
-  return data
-    .map(({ row, cells }) => {
-      const values = Object.fromEntries(IMPORT_COLUMNS.map((c) => [c.key, ''])) as ImportRow
-      headers.forEach((key, i) => {
-        if (key) values[key] = (cells[i] ?? '').trim()
-      })
-      return { row, values }
-    })
-    .filter((r) => Object.values(r.values).some((v) => v !== ''))
-}
+type ReadRow = ReadSheetRow<ImportColumnKey>
 
 export async function readImportFile(file: File): Promise<{ rows: ReadRow[] } | { error: string }> {
-  if (file.size === 0) return { error: 'The file is empty.' }
-  if (file.size > IMPORT_MAX_BYTES) return { error: 'The file is too big. Split it into files of up to 500 rows.' }
-  const name = file.name.toLowerCase()
-
-  let headers: (ImportColumnKey | null)[]
-  let data: { row: number; cells: string[] }[]
-  if (name.endsWith('.xlsx')) {
-    const wb = new ExcelJS.Workbook()
-    try {
-      await wb.xlsx.load(await file.arrayBuffer())
-    } catch {
-      return { error: 'That file couldn’t be read as an Excel workbook.' }
-    }
-    const ws = wb.getWorksheet('Leads') ?? wb.worksheets[0]
-    if (!ws) return { error: 'The workbook has no sheets.' }
-    const head = ws.getRow(1)
-    headers = Array.from({ length: Math.max(head.cellCount, IMPORT_COLUMNS.length) }, (_, i) => headerKey(head.getCell(i + 1).text ?? ''))
-    data = []
-    for (let r = 2; r <= ws.rowCount; r++) {
-      const row = ws.getRow(r)
-      data.push({ row: r, cells: headers.map((key, i) => cellString(row.getCell(i + 1), !!key && DATE_COLUMNS.includes(key))) })
-    }
-  } else if (name.endsWith('.csv')) {
-    const table = parseCsv(await file.text())
-    if (table.length === 0) return { error: 'The file is empty.' }
-    headers = table[0].map(headerKey)
-    data = table.slice(1).map((cells, i) => ({ row: i + 2, cells }))
-  } else {
-    return { error: 'Upload the Excel template (.xlsx) or a CSV saved from it.' }
-  }
-
-  for (const required of ['name', 'phase'] as const) {
-    if (!headers.includes(required)) return { error: `The “${HEADER_OF[required]}” column is missing. Start from the downloaded template.` }
-  }
-  const rows = toRows(headers, data)
-  if (rows.length === 0) return { error: 'The file has no rows to import.' }
-  if (rows.length > IMPORT_MAX_ROWS) return { error: `The file has ${rows.length} rows; the most is ${IMPORT_MAX_ROWS}. Split it into smaller files.` }
-  return { rows }
+  return readSheet(file, { sheet: 'Leads', columns: IMPORT_COLUMNS, dateKeys: DATE_COLUMNS, required: ['name', 'phase'], maxRows: IMPORT_MAX_ROWS, maxBytes: IMPORT_MAX_BYTES })
 }
 
 // ── Checking rows ─────────────────────────────────────────────────
-
-const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
-
-// '' → null; YYYY-MM-DD or M/D/YYYY → YYYY-MM-DD; anything else → 'bad'.
-function parseDay(raw: string): string | null | 'bad' {
-  const s = raw.trim()
-  if (!s) return null
-  let day = s
-  const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s)
-  if (us) day = `${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`
-  if (!DAY_RE.test(day) || dayString(dateOnly(day)) !== day) return 'bad'
-  return day
-}
 
 const PHASE_BY_TEXT = new Map<string, LeadPhase>(LEAD_PHASES.flatMap((p) => [[PHASE_LABELS[p].toLowerCase(), p] as const, [p.toLowerCase(), p] as const]))
 const TYPE_BY_TEXT = new Map<string, LeadRequestType>([
@@ -397,8 +234,7 @@ export async function planImport(rows: ReadRow[], actor: Actor, now = new Date()
 
     let csSpecialist: string | null = null
     if (v.csSpecialist) {
-      const found = /<([^>]+)>/.exec(v.csSpecialist)?.[1] ?? v.csSpecialist
-      csSpecialist = found.trim().toLowerCase()
+      csSpecialist = emailFromLabel(v.csSpecialist)
       if (!teamEmails.has(csSpecialist)) errors.push(`${v.csSpecialist} isn’t an active CS Specialist or CS Manager.`)
     }
 
@@ -510,7 +346,7 @@ export async function planImport(rows: ReadRow[], actor: Actor, now = new Date()
         action: kind,
         name: name ?? existing?.name ?? '',
         customerCode: existing?.customerCode ?? null,
-        phase: phase ? PHASE_LABELS[phase] : null,
+        detail: phase ? PHASE_LABELS[phase] : null,
         messages: [...errors, ...notes],
       },
     })

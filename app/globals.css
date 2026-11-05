@@ -356,3 +356,61 @@ button:active:not(.no-animate):not([disabled]),
 .cms .font-display {
   font-family: var(--font-montserrat), var(--font-sans);
 }
+
+/* ── Accounting System look ───────────────────────────────────────
+   The third sibling (same sidebar and rounding): a cool ledger-paper
+   ground with deep navy ink, so bills and payments read apart from the
+   two customer areas. app/(acct)/layout.tsx wraps it in .acct. Bill
+   statuses use the shared info/success/warning/destructive tokens. */
+.acct {
+  --acct-bg: #eff1f6;
+  --acct-surface: #ffffff;
+  --acct-surface-2: #e6e9f1;
+  --acct-border: #d7dce8;
+  --acct-text: #141a2c;
+  --acct-muted: #5b647d;
+  --acct-ink: #23336b;
+  --acct-ink-contrast: #f3f5ff;
+
+  --background: var(--acct-bg);
+  --foreground: var(--acct-text);
+  --card: var(--acct-surface);
+  --card-foreground: var(--acct-text);
+  --popover: var(--acct-surface);
+  --popover-foreground: var(--acct-text);
+  --primary: var(--acct-ink);
+  --primary-foreground: var(--acct-ink-contrast);
+  --secondary: var(--acct-surface-2);
+  --secondary-foreground: var(--acct-text);
+  --muted: var(--acct-surface-2);
+  --muted-foreground: var(--acct-muted);
+  --accent: var(--acct-surface-2);
+  --accent-foreground: var(--acct-text);
+  --border: var(--acct-border);
+  --input: var(--acct-border);
+  --ring: var(--acct-ink);
+  --info: #3d62b3;
+  --success: #2d8656;
+  --warning: #a86f17;
+  --destructive: #b0473b;
+  --radius: 0.75rem;
+
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.dark .acct {
+  --acct-bg: #0d101a;
+  --acct-surface: #141927;
+  --acct-surface-2: #1b2133;
+  --acct-border: #283048;
+  --acct-text: #e5e8f3;
+  --acct-muted: #8e97b1;
+  --acct-ink: #a3b3ff;
+  --acct-ink-contrast: #0d101a;
+
+  --info: #86a5e6;
+  --success: #5cc58b;
+  --warning: #e0a650;
+  --destructive: #e07c70;
+}
