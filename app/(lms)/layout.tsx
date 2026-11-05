@@ -5,7 +5,7 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { SignOutButton } from '@/components/layout/SignOutButton'
 import { LmsNav } from '@/components/lms/LmsNav'
 import { SystemSwitcher } from '@/components/lms/SystemSwitcher'
-import { EXTERNAL_SYSTEMS, type SystemLink } from '@/components/lms/systems'
+import { CMS_ICON, EXTERNAL_SYSTEMS, type SystemLink } from '@/components/lms/systems'
 import { initialsFrom } from '@/components/lms/stage-meta'
 import { redirect } from 'next/navigation'
 import { requireSignedIn, displayName } from '@/lib/auth'
@@ -30,8 +30,8 @@ export default async function LmsLayout({ children }: { children: React.ReactNod
   const leads = board ? await listLeads() : []
 
   const others: SystemLink[] = [
-    ...(canUse(user.role, 'customers') ? [{ label: 'Customer Management', href: '/customers' }] : []),
-    ...(user.role === 'ADMIN' ? [{ label: 'All VAA systems', href: '/' }] : []),
+    ...(canUse(user.role, 'customers') ? [{ label: 'Customer Management', href: '/customers', icon: CMS_ICON }] : []),
+    ...(user.role === 'ADMIN' ? [{ label: 'All VAA systems', href: '/', icon: CMS_ICON }] : []),
     ...EXTERNAL_SYSTEMS,
   ]
   const name = displayName(user)
