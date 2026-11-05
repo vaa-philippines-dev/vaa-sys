@@ -8,16 +8,22 @@ import type { Actor } from '@/lib/auth'
 // status and phase logs, notes, takeovers, and bills. The activity log keeps
 // its rows, plus one saying who deleted it.
 //
-// Two guards: a real lead needs its name typed back (the page asks), and a
-// real lead with payments recorded in the Accounting System is refused, so
-// money received never disappears with it. Test leads skip both.
+// Guards on a real lead: it must still be a lead (Pending and not yet
+// onboarded, the same test as Lead Management's list), since /leads/<id>
+// opens any customer and a customer must never be deleted this way; its
+// name must be typed back (the page asks); and one with payments recorded in
+// the Accounting System is refused, so money received never disappears with
+// it. Test leads skip these.
+export const isStillLead = (c: { status: string; leadPhase: string }) => c.status === 'PENDING' && c.leadPhase !== 'NEW_CUSTOMER_ONBOARDED'
+
 export async function deleteLead(actor: Actor, customerId: string, typedName: string): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
   const lead = await prisma.customer.findUnique({
     where: { id: customerId },
-    select: { name: true, customerCode: true, isTest: true, status: true, _count: { select: { payments: true, accounts: true } } },
+    select: { name: true, customerCode: true, isTest: true, status: true, leadPhase: true, _count: { select: { payments: true, accounts: true } } },
   })
   if (!lead) return { ok: false, error: 'That lead no longer exists.' }
   if (!lead.isTest) {
+    if (!isStillLead(lead)) return { ok: false, error: `${lead.name} is a customer now, not a lead, so it can’t be deleted.` }
     if (typedName.trim().toLowerCase() !== lead.name.trim().toLowerCase()) return { ok: false, error: 'Type the lead’s name exactly to confirm.' }
     if (lead._count.payments > 0)
       return { ok: false, error: `${lead.name} has payments recorded in the Accounting System, so it can’t be deleted. Ask Accounting to remove them first if they were a mistake.` }

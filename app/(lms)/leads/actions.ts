@@ -13,6 +13,7 @@ import { confirmContractSchema, PHASE_LABELS, REQUEST_TYPES, REQUEST_TYPE_LABELS
 import { REQUEST_GROUPS, type RequestGroup } from '@/lib/onboarding-fields'
 import { addTestLead, sampleOnboarding } from '@/lib/test-leads'
 import { deleteLead } from '@/lib/lead-delete'
+import { assertCustomerInScope } from '@/lib/scope'
 import { createInitialDraft, discardDraft, saveDraft, sendBill } from '@/lib/billing'
 import type { DraftBillInput } from '@/lib/billing-fields'
 import { submitOnboarding } from '@/app/onboarding/[token]/actions'
@@ -279,8 +280,16 @@ function refreshBill(customerId: string) {
   revalidatePath('/accounting', 'layout')
 }
 
-export async function prepareInitialBill(customerId: string): Promise<ActionResult> {
+// The bill actions take a lead's id, so they check its scope like every
+// action on a customer (CLAUDE.md). The Lead Manager sees every lead today;
+// this keeps it safe if the grant ever goes to a scoped role.
+async function billActor(customerId: string) {
   const actor = await getActorFor('leads', 'update')
+  return actor && (await assertCustomerInScope(actor, customerId)) ? actor : null
+}
+
+export async function prepareInitialBill(customerId: string): Promise<ActionResult> {
+  const actor = await billActor(customerId)
   if (!actor) return { ok: false, error: NO_ACCESS }
   const result = await createInitialDraft(actor, customerId)
   if (!result.ok) return result
@@ -289,7 +298,7 @@ export async function prepareInitialBill(customerId: string): Promise<ActionResu
 }
 
 export async function saveInitialBill(customerId: string, invoiceId: string, input: DraftBillInput): Promise<ActionResult<{ total: number }>> {
-  const actor = await getActorFor('leads', 'update')
+  const actor = await billActor(customerId)
   if (!actor) return { ok: false, error: NO_ACCESS }
   const result = await saveDraft(actor, customerId, invoiceId, input)
   if (result.ok) refreshBill(customerId)
@@ -298,7 +307,7 @@ export async function saveInitialBill(customerId: string, invoiceId: string, inp
 
 // Saves the draft as it is on screen, then marks it sent.
 export async function sendInitialBill(customerId: string, invoiceId: string, input: DraftBillInput): Promise<ActionResult> {
-  const actor = await getActorFor('leads', 'update')
+  const actor = await billActor(customerId)
   if (!actor) return { ok: false, error: NO_ACCESS }
   const saved = await saveDraft(actor, customerId, invoiceId, input)
   if (!saved.ok) return saved
@@ -308,7 +317,7 @@ export async function sendInitialBill(customerId: string, invoiceId: string, inp
 }
 
 export async function discardInitialBill(customerId: string, invoiceId: string): Promise<ActionResult> {
-  const actor = await getActorFor('leads', 'update')
+  const actor = await billActor(customerId)
   if (!actor) return { ok: false, error: NO_ACCESS }
   const result = await discardDraft(actor, customerId, invoiceId)
   if (result.ok) refreshBill(customerId)

@@ -44,6 +44,29 @@ const n = (d: Prisma.Decimal | number | null | undefined) => (d == null ? 0 : Nu
 // Sydney.
 const BILL_TX = { maxWait: 10_000, timeout: 20_000 }
 
+// Steps on the same bill must not interleave (two tabs saving and sending,
+// two people recording payments, a void racing a payment). Each one locks the
+// bill's row first and checks its state again inside the transaction; a
+// check that fails there throws BillError, which the step returns as its
+// error (review on PR #7).
+class BillError extends Error {}
+
+async function lockInvoice(tx: Tx, id: string) {
+  const rows = await tx.$queryRaw<{ status: InvoiceStatus; total: string; paid: string }[]>`
+    SELECT status::text AS status, total::text AS total, amount_paid::text AS paid FROM vaa_sys.invoices WHERE id = ${id} FOR UPDATE`
+  if (!rows[0]) throw new BillError('That bill no longer exists.')
+  return { status: rows[0].status, total: Number(rows[0].total), paid: Number(rows[0].paid) }
+}
+
+async function refusable<T>(fn: () => Promise<T>): Promise<Result<T>> {
+  try {
+    return { ok: true, data: await fn() }
+  } catch (err) {
+    if (err instanceof BillError) return { ok: false, error: err.message }
+    throw err
+  }
+}
+
 // ── Settings ─────────────────────────────────────────────────────
 
 const DEFAULTS_KEY = 'billing_defaults'
@@ -250,7 +273,11 @@ export async function createInitialDraft(actor: Actor, customerId: string): Prom
     start.currency,
   )
 
-  const id = await prisma.$transaction(async (tx) => {
+  return refusable(() => prisma.$transaction(async (tx) => {
+    // Two Prepare clicks at once: the second waits for the first's lock on
+    // the lead, then sees its bill.
+    await tx.$queryRaw`SELECT id FROM vaa_sys.customers WHERE id = ${customerId} FOR UPDATE`
+    if (await tx.invoice.count({ where: { customerId, kind: 'INITIAL', status: { not: 'VOID' } } })) throw new BillError('This lead already has an initial bill.')
     const inv = await tx.invoice.create({
       data: {
         kind: 'INITIAL',
@@ -280,9 +307,8 @@ export async function createInitialDraft(actor: Actor, customerId: string): Prom
       newValue: bill.total,
       notes: 'Initial bill drafted from the service requests',
     })
-    return inv.id
-  }, BILL_TX)
-  return { ok: true, data: { id } }
+    return { id: inv.id }
+  }, BILL_TX))
 }
 
 async function draftOf(invoiceId: string, customerId: string) {
@@ -334,7 +360,9 @@ export async function saveDraft(actor: Actor, customerId: string, invoiceId: str
   })
   const bill = billOf(edited.settings, edited.items, edited.departments, v.currency)
 
-  const total = await prisma.$transaction(async (tx) => {
+  return refusable(() => prisma.$transaction(async (tx) => {
+    // Sent from another tab since it was read: leave it as sent.
+    if ((await lockInvoice(tx, invoiceId)).status !== 'DRAFT') throw new BillError('This bill has been sent, so it can’t change. Accounting can void it if it’s wrong.')
     await tx.invoice.update({
       where: { id: invoiceId },
       data: { currency: v.currency, applyVat: v.applyVat, applyPaypalFee: v.applyPaypalFee, notes: v.notes || null, updatedByEmail: actor.email.toLowerCase() },
@@ -354,9 +382,8 @@ export async function saveDraft(actor: Actor, customerId: string, invoiceId: str
         newValue: bill.total,
       })
     }
-    return bill.total
-  }, BILL_TX)
-  return { ok: true, data: { total } }
+    return { total: bill.total }
+  }, BILL_TX))
 }
 
 export async function sendBill(actor: Actor, customerId: string, invoiceId: string): Promise<Result> {
@@ -365,7 +392,8 @@ export async function sendBill(actor: Actor, customerId: string, invoiceId: stri
   if (inv.status !== 'DRAFT') return { ok: false, error: 'This bill has already been sent.' }
   const missingRate = inv.items.find((i) => n(i.hourlyRate) <= 0 && n(i.hours) > 0)
   if (missingRate) return { ok: false, error: `Enter the hourly rate for ${missingRate.service} first.` }
-  await prisma.$transaction(async (tx) => {
+  return refusable(() => prisma.$transaction(async (tx) => {
+    if ((await lockInvoice(tx, invoiceId)).status !== 'DRAFT') throw new BillError('This bill has already been sent.')
     await tx.invoice.update({ where: { id: invoiceId }, data: { status: 'SENT', sentAt: new Date(), sentByEmail: actor.email.toLowerCase() } })
     await logActivity(tx, actor, {
       entityType: 'Invoice',
@@ -375,8 +403,8 @@ export async function sendBill(actor: Actor, customerId: string, invoiceId: stri
       action: 'INVOICE_SENT',
       newValue: `${inv.currency} ${n(inv.total).toFixed(2)}`,
     })
-  }, BILL_TX)
-  return { ok: true, data: null }
+    return null
+  }, BILL_TX))
 }
 
 // A draft can be thrown away and made again from the requests.
@@ -384,11 +412,12 @@ export async function discardDraft(actor: Actor, customerId: string, invoiceId: 
   const inv = await draftOf(invoiceId, customerId)
   if (!inv) return { ok: false, error: 'That bill no longer exists.' }
   if (inv.status !== 'DRAFT') return { ok: false, error: 'Only a draft can be discarded. Accounting can void a sent bill.' }
-  await prisma.$transaction(async (tx) => {
+  return refusable(() => prisma.$transaction(async (tx) => {
+    if ((await lockInvoice(tx, invoiceId)).status !== 'DRAFT') throw new BillError('Only a draft can be discarded. Accounting can void a sent bill.')
     await tx.invoice.delete({ where: { id: invoiceId } })
     await logActivity(tx, actor, { entityType: 'Invoice', entityId: invoiceId, entityLabel: `${invoiceCode(inv.invoiceNumber)} (${inv.customer.name})`, customerId, action: 'DELETE', notes: 'Draft discarded' })
-  }, BILL_TX)
-  return { ok: true, data: null }
+    return null
+  }, BILL_TX))
 }
 
 // ── Payments and voiding (Accounting) ────────────────────────────
@@ -412,7 +441,17 @@ export async function recordPayment(actor: Actor, invoiceId: string, input: Paym
   if (inv.status === 'VOID') return { ok: false, error: 'This bill is void.' }
   if (v.paidOn > manilaToday()) return { ok: false, error: 'The payment date can’t be in the future.' }
 
-  await prisma.$transaction(async (tx) => {
+  return refusable(() => prisma.$transaction(async (tx) => {
+    // Locked, so two payments at once are added one after the other, and a
+    // payment can't land on a bill being voided.
+    const now = await lockInvoice(tx, invoiceId)
+    if (now.status === 'VOID') throw new BillError('This bill is void.')
+    if (now.status === 'DRAFT') throw new BillError('The bill hasn’t been sent yet.')
+    // No overpayments: a duplicate transfer or a payment meant for another
+    // bill would push the balance below zero.
+    const balance = Math.round((now.total - now.paid) * 100) / 100
+    if (now.status === 'PAID' || balance <= 0) throw new BillError('This bill is already paid in full.')
+    if (v.amount > balance + 0.004) throw new BillError(`That’s more than the ${inv.currency} ${balance.toFixed(2)} still owed on this bill.`)
     const p = await tx.payment.create({
       data: {
         invoiceId,
@@ -435,14 +474,15 @@ export async function recordPayment(actor: Actor, invoiceId: string, input: Paym
       newValue: `${inv.currency} ${v.amount.toFixed(2)} on ${v.paidOn} (${v.method})`,
       notes: `Bill now ${status}`,
     })
-  }, BILL_TX)
-  return { ok: true, data: { customerId: inv.customerId } }
+    return { customerId: inv.customerId }
+  }, BILL_TX))
 }
 
 export async function removePayment(actor: Actor, paymentId: string): Promise<Result<{ invoiceId: string; customerId: string }>> {
   const p = await prisma.payment.findUnique({ where: { id: paymentId }, include: { invoice: { select: { invoiceNumber: true, currency: true, customer: { select: { name: true } } } } } })
   if (!p) return { ok: false, error: 'That payment no longer exists.' }
   await prisma.$transaction(async (tx) => {
+    await lockInvoice(tx, p.invoiceId)
     await tx.payment.delete({ where: { id: paymentId } })
     await syncPaid(tx, p.invoiceId)
     await logActivity(tx, actor, {
@@ -465,7 +505,11 @@ export async function voidInvoice(actor: Actor, invoiceId: string, reason: strin
   if (inv.status === 'DRAFT') return { ok: false, error: 'A draft isn’t sent yet; the Lead Manager can discard it instead.' }
   if (inv.status === 'VOID') return { ok: false, error: 'This bill is already void.' }
   if (inv._count.payments > 0) return { ok: false, error: 'This bill has payments recorded. Remove them first if they were a mistake.' }
-  await prisma.$transaction(async (tx) => {
+  return refusable(() => prisma.$transaction(async (tx) => {
+    // Checked again under the lock: a payment may have landed since.
+    const now = await lockInvoice(tx, invoiceId)
+    if (now.status === 'VOID') throw new BillError('This bill is already void.')
+    if (await tx.payment.count({ where: { invoiceId } })) throw new BillError('This bill has payments recorded. Remove them first if they were a mistake.')
     await tx.invoice.update({ where: { id: invoiceId }, data: { status: 'VOID', voidedAt: new Date(), voidedByEmail: actor.email.toLowerCase(), voidReason: reason } })
     await logActivity(tx, actor, {
       entityType: 'Invoice',
@@ -475,8 +519,8 @@ export async function voidInvoice(actor: Actor, invoiceId: string, reason: strin
       action: 'INVOICE_VOIDED',
       notes: reason,
     })
-  }, BILL_TX)
-  return { ok: true, data: { customerId: inv.customerId } }
+    return { customerId: inv.customerId }
+  }, BILL_TX))
 }
 
 // ── Lists for the Accounting pages ───────────────────────────────

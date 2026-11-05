@@ -138,6 +138,7 @@ export async function planCustomerImport(rows: Row[], now = new Date()): Promise
   const reasonByText = new Map(reasons.flatMap((r) => [[r.label.toLowerCase(), r.id] as const, [r.value.toLowerCase(), r.id] as const]))
   const namesInFile = new Map<string, number>()
   const codesInFile = new Map<string, number>()
+  const lookups: { index: number; name: string; key: string }[] = []
 
   const plans: RowPlan[] = []
   for (const { row, values: v } of rows) {
@@ -229,18 +230,8 @@ export async function planCustomerImport(rows: Row[], now = new Date()): Promise
         errors.push(`The same name is already on row ${first} of this file.`)
         kind = 'error'
       } else namesInFile.set(key, row)
-      if (kind === 'create') {
-        const matches = await findCustomerMatches(name)
-        const exact = matches.find((m) => m.name.trim().toLowerCase() === key)
-        if (exact) {
-          kind = 'skip'
-          notes.push(
-            exact.source === 'vaa_sys'
-              ? `Already in vaa-sys as ${exact.code}. Put that Customer ID in the row to update it.`
-              : `Already in the legacy CMS as ${exact.code ?? 'a customer'}; not added.`
-          )
-        } else if (matches.length) notes.push(`Similar names: ${matches.map((m) => m.name).join(', ')}.`)
-      }
+      // Checked against vaa-sys and the legacy CMS after the loop, many at once.
+      if (kind === 'create') lookups.push({ index: plans.length, name, key })
     }
     if (kind === 'update') notes.unshift(`Updates ${existing!.name}.`)
 
@@ -265,6 +256,28 @@ export async function planCustomerImport(rows: Row[], now = new Date()): Promise
         detail: status ? (existing ? `${STATUS_LABELS[existing.status]} → ${STATUS_LABELS[status]}` : STATUS_LABELS[status]) : null,
         messages: [...errors, ...notes],
       },
+    })
+  }
+
+  // A new customer mustn't already exist, here or in the legacy CMS. The
+  // lookups run ten at a time rather than one row after another, so a
+  // 500-row file stays quick (review on PR #7).
+  for (let i = 0; i < lookups.length; i += 10) {
+    const batch = lookups.slice(i, i + 10)
+    const found = await Promise.all(batch.map((l) => findCustomerMatches(l.name)))
+    batch.forEach((l, j) => {
+      const plan = plans[l.index]
+      const matches = found[j]
+      const exact = matches.find((m) => m.name.trim().toLowerCase() === l.key)
+      if (exact) {
+        plan.kind = 'skip'
+        plan.result.action = 'skip'
+        plan.result.messages.push(
+          exact.source === 'vaa_sys'
+            ? `Already in vaa-sys as ${exact.code}. Put that Customer ID in the row to update it.`
+            : `Already in the legacy CMS as ${exact.code ?? 'a customer'}; not added.`
+        )
+      } else if (matches.length) plan.result.messages.push(`Similar names: ${matches.map((m) => m.name).join(', ')}.`)
     })
   }
   return plans

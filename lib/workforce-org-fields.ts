@@ -37,6 +37,8 @@ export type OrgDepartment = {
   sortOrder: number
   headName: string | null
   mergedIntoName: string | null
+  // The parent's name, which may be outside the service departments.
+  parentName: string | null
   serviceCount: number
   memberCount: number
   updatedAt: string

@@ -36,12 +36,14 @@ export async function listServiceDepartmentsFull(): Promise<OrgDepartment[]> {
            d.level::text AS level, d.status::text AS status, d.sort_order AS "sortOrder",
            nullif(trim(coalesce(h.first_name, '') || ' ' || coalesce(h.last_name, '')), '') AS "headName",
            m.name AS "mergedIntoName",
+           p.name AS "parentName",
            (SELECT count(*)::int FROM public.department_skills ds WHERE ds.department_id = d.id) AS "serviceCount",
            (SELECT count(*)::int FROM public.department_memberships dm WHERE dm.department_id = d.id AND dm.ended_at IS NULL) AS "memberCount",
            d.updated_at AS "updatedAt"
     FROM public.departments d
     LEFT JOIN public.users h ON h.id = d.head_id
     LEFT JOIN public.departments m ON m.id = d.merged_into_id
+    LEFT JOIN public.departments p ON p.id = d.parent_id
     WHERE d.level::text = 'SERVICE'
     ORDER BY d.sort_order, d.name`
   return rows.map((r) => ({ ...r, updatedAt: r.updatedAt.toISOString() }))
@@ -79,7 +81,10 @@ export async function saveDepartment(actor: Actor, id: string | null, v: Departm
   if (id && !current) return { ok: false, error: 'That service department no longer exists in Workforce.' }
   if (current && current.status !== 'ACTIVE' && current.status !== 'INACTIVE')
     return { ok: false, error: 'A merged or split department is read-only here. Change it in Workforce.' }
-  if (v.parentId && !all.some((d) => d.id === v.parentId)) return { ok: false, error: 'Pick a service department for it to sit under.' }
+  // A department's current parent may sit outside the service departments in
+  // Workforce's tree; keeping it unchanged is always allowed, so saving other
+  // fields never moves it (review on PR #7).
+  if (v.parentId && v.parentId !== current?.parentId && !all.some((d) => d.id === v.parentId)) return { ok: false, error: 'Pick a service department for it to sit under.' }
   if (wouldLoop(id, v.parentId, all)) return { ok: false, error: 'A department can’t sit under itself or one of its own sub-departments.' }
   const name = v.name.trim()
   const taken = await prisma.$queryRaw<{ n: number }[]>`SELECT count(*)::int AS n FROM public.departments WHERE lower(trim(name)) = ${name.toLowerCase()} AND id <> ${id ?? ''}`
@@ -156,7 +161,8 @@ export async function listOrgServices(viewerEmail: string): Promise<OrgService[]
 }
 
 export async function saveServiceDetails(actor: Actor, skillId: string, v: ServiceDetailsInput): Promise<Result> {
-  const skill = (await listSkills()).find((s) => s.id === skillId)
+  const skills = await listSkills()
+  const skill = skills.find((s) => s.id === skillId)
   if (!skill) return { ok: false, error: 'That service no longer exists in Workforce.' }
   if (v.contractId && !(await prisma.contract.count({ where: { id: v.contractId } }))) return { ok: false, error: 'That contract no longer exists.' }
   if (v.onboardingService && !(SERVICE_OFFERINGS as readonly string[]).includes(v.onboardingService)) return { ok: false, error: 'Pick an onboarding form service from the list.' }
@@ -164,7 +170,7 @@ export async function saveServiceDetails(actor: Actor, skillId: string, v: Servi
   if (v.onboardingService) {
     const other = await prisma.serviceProfile.findFirst({ where: { onboardingService: v.onboardingService, NOT: { skillId } } })
     if (other) {
-      const otherName = (await listSkills()).find((s) => s.id === other.skillId)?.name ?? 'another service'
+      const otherName = skills.find((s) => s.id === other.skillId)?.name ?? 'another service'
       return { ok: false, error: `“${v.onboardingService}” is already billed as ${otherName}. Clear it there first.` }
     }
   }
@@ -203,13 +209,19 @@ export async function saveServiceRates(actor: Actor, skillId: string, v: Service
     standard: before?.standardRateCipher ? decryptRate(before.standardRateCipher, rateAad(skillId, 'standard')) : null,
     vaBase: before?.vaBaseRateCipher ? decryptRate(before.vaBaseRateCipher, rateAad(skillId, 'vaBase')) : null,
   }
+  // A rate that can't be read (another key, damaged) reaches the page as
+  // blank. Blank then means "leave it", so saving the other rate never wipes
+  // it; only a new value replaces it (review on PR #7).
+  const keep = (k: 'standard' | 'vaBase') => !!old[k] && !old[k]!.ok && v[k] === null
   const same = (d: (typeof old)['standard'], next: number | null) => (d === null ? next === null : d.ok && next !== null && d.value === next)
-  const changed = (['standard', 'vaBase'] as const).filter((k) => !same(old[k], v[k]))
+  const changed = (['standard', 'vaBase'] as const).filter((k) => !keep(k) && !same(old[k], v[k]))
   if (changed.length === 0) return { ok: true, data: null }
 
+  // Only the rates that changed are written.
+  const cipher = (k: 'standard' | 'vaBase') => (v[k] === null ? null : encryptRate(v[k]!, rateAad(skillId, k)))
   const data = {
-    standardRateCipher: v.standard === null ? null : encryptRate(v.standard, rateAad(skillId, 'standard')),
-    vaBaseRateCipher: v.vaBase === null ? null : encryptRate(v.vaBase, rateAad(skillId, 'vaBase')),
+    ...(changed.includes('standard') ? { standardRateCipher: cipher('standard') } : {}),
+    ...(changed.includes('vaBase') ? { vaBaseRateCipher: cipher('vaBase') } : {}),
     ratesUpdatedAt: new Date(),
     ratesUpdatedByEmail: actor.email.toLowerCase(),
   }

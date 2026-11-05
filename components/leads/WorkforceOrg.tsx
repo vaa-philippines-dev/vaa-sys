@@ -521,10 +521,14 @@ function DepartmentForm({ department, departments, onDone }: { department?: OrgD
   const byId = useMemo(() => new Map(departments.map((d) => [d.id, d])), [departments])
   const parents = useMemo(() => {
     const blocked = department ? descendantsOf(department.id, departments) : new Set<string>()
-    return departments
+    const options = departments
       .filter((d) => !blocked.has(d.id))
       .map((d) => ({ id: d.id, label: departmentPath(d.id, byId) + (d.status === 'ACTIVE' ? '' : ` (${DEPARTMENT_STATUS_LABELS[d.status]})`) }))
       .sort((a, b) => a.label.localeCompare(b.label))
+    // Its current parent can be outside the service departments; offer it,
+    // so saving other fields keeps it where Workforce has it.
+    if (department?.parentId && !byId.has(department.parentId)) options.unshift({ id: department.parentId, label: `${department.parentName ?? 'Its current parent'} (current, not a service department)` })
+    return options
   }, [department, departments, byId])
 
   const save = () =>

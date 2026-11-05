@@ -7,6 +7,7 @@ import { contractChoices } from '@/lib/contracts'
 import { staffNames } from '@/lib/workforce'
 import { getBillingDefaults, getInitialBill, voidedInitialBills } from '@/lib/billing'
 import { initialBillView } from '@/lib/billing-view'
+import { isStillLead } from '@/lib/lead-delete'
 
 export default async function LeadPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -20,7 +21,8 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
         choices={choices}
         senderName={displayName(user)}
         canEdit={can(user.role, 'leads', 'update')}
-        canDelete={can(user.role, 'leads', 'delete')}
+        // Only a record that's still a lead (or a test lead) can be deleted here.
+        canDelete={can(user.role, 'leads', 'delete') && (customer.isTest || isStillLead(customer))}
         addedByName={names.get(customer.createdByEmail.toLowerCase()) ?? customer.createdByEmail}
         bill={initialBillView(bill, voided, defaults, can(user.role, 'billing'))}
       />
