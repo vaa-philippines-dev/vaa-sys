@@ -237,6 +237,18 @@ export async function saveServiceRates(actor: Actor, skillId: string, v: Service
   return { ok: true, data: null }
 }
 
+// ── For Rate Agreements ───────────────────────────────────────────
+
+// The VA Base Rate of the service an onboarding form service is billed as,
+// for a Rate Agreement's summary. Like the Departments page, it's decrypted
+// only for a rate viewer; anyone else gets null and it's never read.
+export async function vaBaseRateForService(onboardingService: string, viewerEmail: string | null): Promise<RateCell | null> {
+  if (!(await canViewRates(viewerEmail))) return null
+  const p = await prisma.serviceProfile.findUnique({ where: { onboardingService } })
+  if (!p) return { value: null, problem: null }
+  return cell(p.vaBaseRateCipher, rateAad(p.skillId, 'vaBase'))
+}
+
 // ── For new bills ─────────────────────────────────────────────────
 
 // The Standard Billing Rate for each onboarding form service, for a new

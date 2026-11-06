@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma'
 import { assertAccountInScope } from '@/lib/scope'
 import { SR_TYPES, type SrType } from '@/lib/service-request-fields'
 import { NewServiceRequestForm } from '@/components/requests/NewServiceRequestForm'
+import { timeZoneOptions } from '@/lib/onboarding-fields'
 
 // Opening a service request on an account (/service-requests/new?account=…).
 // Every account has a New one (the onboarding form's, or one opened here);
@@ -16,7 +17,7 @@ export default async function NewServiceRequestPage({ searchParams }: { searchPa
   if (!accountId || !(await assertAccountInScope(user, accountId))) notFound()
   const account = await prisma.account.findUnique({
     where: { id: accountId },
-    select: { id: true, name: true, accountCode: true, customer: { select: { name: true } }, _count: { select: { tickets: { where: { type: 'NEW' } } } } },
+    select: { id: true, name: true, accountCode: true, timeZone: true, customer: { select: { name: true } }, _count: { select: { tickets: { where: { type: 'NEW' } } } } },
   })
   if (!account) notFound()
   const types: SrType[] = account._count.tickets > 0 ? SR_TYPES.filter((t) => t !== 'NEW') : ['NEW']
@@ -37,7 +38,7 @@ export default async function NewServiceRequestPage({ searchParams }: { searchPa
             : 'Additional VAs, a Replacement for a VA leaving, or a Reliever covering one. Each VA becomes its own VA request on the ticket.'}
         </p>
       </div>
-      <NewServiceRequestForm accountId={account.id} types={types} />
+      <NewServiceRequestForm accountId={account.id} types={types} accountTimeZone={account.timeZone} timeZones={timeZoneOptions()} />
     </main>
   )
 }

@@ -4,18 +4,22 @@ import Link from 'next/link'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { SignOutButton } from '@/components/layout/SignOutButton'
 import { CmsNav, type CmsNavItem } from '@/components/cms/CmsNav'
-import { STATUS_ORDER } from '@/components/cms/status-meta'
 import { SystemSwitcher } from '@/components/lms/SystemSwitcher'
 import { EXTERNAL_SYSTEMS, type SystemLink } from '@/components/lms/systems'
 import { initialsFrom } from '@/components/lms/stage-meta'
 import { prisma } from '@/lib/prisma'
-import { requireSignedIn, displayName } from '@/lib/auth'
-import { canUse, homeFor, ROLE_LABELS } from '@/lib/access-fields'
+import { requireSignedIn, displayName, rateViewerEmail } from '@/lib/auth'
+import { canViewRates } from '@/lib/rates'
+import { canUse, grantableRoles, homeFor, ROLE_LABELS } from '@/lib/access-fields'
+import { accessPeopleWhoLeft } from '@/lib/access-staff'
+import { countSchedulesToReview } from '@/lib/request-schedule'
+import { countRaWaitingOn } from '@/lib/rate-agreements'
+import { hrTicketWhere } from '@/lib/service-requests'
+import { ViewAsBanner } from '@/components/layout/ViewAsBanner'
 import { can } from '@/lib/permissions'
 import { customerScopeWhere } from '@/lib/scope'
 import { REAL_CUSTOMERS, countPendingReviews } from '@/lib/customers'
 import { redirect } from 'next/navigation'
-import type { CustomerStatus } from '@/lib/customer-fields'
 
 // Customer Management's shell: the LMS sidebar pattern in the .cms palette
 // (app/globals.css). Holds every Customer Management page; each page still
@@ -26,26 +30,46 @@ export default async function CmsLayout({ children }: { children: React.ReactNod
   if (!can(r, 'customers') && !can(r, 'access') && !can(r, 'settings') && !can(r, 'serviceRequests')) redirect(homeFor(r))
 
   const scope = await customerScopeWhere(user)
-  const [counts, reviews, openRequests] = await Promise.all([
-    can(r, 'customers') ? prisma.customer.groupBy({ by: ['status'], where: { AND: [scope ?? {}, REAL_CUSTOMERS] }, _count: { _all: true } }) : Promise.resolve([]),
+  const [activeCustomers, activeAccounts, reviews, openRequests, leftStaff, scheduleReviews, rateAgreements] = await Promise.all([
+    // The Customers and Accounts counts are the Active ones (Nov 6, 2026).
+    can(r, 'customers') ? prisma.customer.count({ where: { AND: [scope ?? {}, REAL_CUSTOMERS, { status: 'ACTIVE' }] } }) : Promise.resolve(0),
+    can(r, 'accounts') ? prisma.account.count({ where: { status: 'ACTIVE', customer: { AND: [scope ?? {}, REAL_CUSTOMERS] } } }) : Promise.resolve(0),
     can(r, 'approvals', 'update') ? countPendingReviews() : Promise.resolve(0),
     can(r, 'serviceRequests')
-      ? prisma.ticket.count({ where: { phase: { notIn: ['CLOSED_WON', 'CLOSED_LOST'] }, customer: { AND: [scope ?? {}, REAL_CUSTOMERS] } } }).catch(() => 0)
+      ? prisma.ticket.count({ where: { phase: { notIn: ['CLOSED_WON', 'CLOSED_LOST'] }, customer: { AND: [scope ?? {}, REAL_CUSTOMERS] }, ...hrTicketWhere(user) } }).catch(() => 0)
       : Promise.resolve(0),
+    // People with access who have left VAA in Workforce, among those this
+    // person can remove.
+    can(r, 'access') ? accessPeopleWhoLeft().then((l) => l.filter((p) => grantableRoles(r).includes(p.role)).length).catch(() => 0) : Promise.resolve(0),
+    can(r, 'scheduleReviews') ? countSchedulesToReview().catch(() => 0) : Promise.resolve(0),
+    // An HR Specialist's open Rate Agreements; an HR Manager's unassigned ones.
+    can(r, 'rateAgreements') ? countRaWaitingOn(user).catch(() => 0) : Promise.resolve(0),
   ])
-  const byStatus = Object.fromEntries(STATUS_ORDER.map((s) => [s, counts.find((c) => c.status === s)?._count._all ?? 0])) as Record<CustomerStatus, number>
-  const total = counts.reduce((sum, c) => sum + c._count._all, 0)
 
+  // Departments & services is also here, under Company, for admins and the
+  // people allowed to see the confidential rates.
+  const seesDepartments = can(r, 'workforceOrg') || (await canViewRates(rateViewerEmail(user)))
+
+  // The sidebar's sections (Nov 6, 2026): Customer Success, Human Resources,
+  // Company, Settings.
+  const CS = 'Customer Success'
+  const HR = 'Human Resources'
+  const CO = 'Company'
+  const SET = 'Settings'
   const candidates: (CmsNavItem | false)[] = [
-    can(r, 'customers') && { href: '/customers', label: 'Customers', icon: 'customers', count: total },
-    can(r, 'accounts') && { href: '/accounts', label: 'Accounts', icon: 'accounts' },
-    can(r, 'serviceRequests') && { href: '/service-requests', label: 'Service Requests', icon: 'requests', count: openRequests },
-    can(r, 'csSpecialists') && { href: '/specialists', label: 'CS Specialists', icon: 'specialists' },
-    can(r, 'approvals', 'update') && { href: '/approvals', label: 'Approvals', icon: 'approvals', count: reviews, alert: true },
-    can(r, 'contracts') && { href: '/contracts', label: 'Contracts', icon: 'contracts' },
-    can(r, 'activityLogs') && { href: '/activity', label: 'Activity log', icon: 'activity' },
-    can(r, 'settings') && { href: '/settings', label: 'Settings', icon: 'settings' },
-    can(r, 'access') && { href: '/access', label: 'Access', icon: 'access' },
+    can(r, 'customers') && { section: CS, href: '/customers', label: 'Customers', icon: 'customers', count: activeCustomers },
+    can(r, 'accounts') && { section: CS, href: '/accounts', label: 'Accounts', icon: 'accounts', count: activeAccounts },
+    can(r, 'serviceRequests') && { section: CS, href: '/service-requests', label: 'Service Requests', icon: 'requests', count: openRequests },
+    can(r, 'scheduleReviews') && { section: CS, href: '/service-requests/schedule-changes', label: 'Schedule changes', icon: 'schedule', count: scheduleReviews, alert: true },
+    can(r, 'vaConnections') && { section: CS, href: '/va-connections', label: 'VA Connections', icon: 'connections' },
+    can(r, 'csSpecialists') && { section: CS, href: '/specialists', label: 'CS Specialists', icon: 'specialists' },
+    can(r, 'approvals', 'update') && { section: CS, href: '/approvals', label: 'Approvals', icon: 'approvals', count: reviews, alert: true },
+    can(r, 'rateAgreements') && { section: HR, href: '/rate-agreements', label: 'Rate Agreements', icon: 'rates', count: rateAgreements, alert: true },
+    can(r, 'contracts') && { section: CO, href: '/contracts', label: 'Contracts', icon: 'contracts' },
+    seesDepartments && { section: CO, href: '/departments', label: 'Departments & services', icon: 'departments' },
+    can(r, 'settings') && { section: SET, href: '/settings', label: 'Settings', icon: 'settings' },
+    can(r, 'access') && { section: SET, href: '/access', label: 'Access', icon: 'access', count: leftStaff, alert: true },
+    can(r, 'activityLogs') && { section: SET, href: '/activity', label: 'Activity log', icon: 'activity' },
   ]
   const items = candidates.filter((i): i is CmsNavItem => !!i)
 
@@ -77,7 +101,7 @@ export default async function CmsLayout({ children }: { children: React.ReactNod
             {switcher}
           </div>
           <Suspense>
-            <CmsNav items={items} byStatus={can(r, 'customers') ? byStatus : null} />
+            <CmsNav items={items} />
           </Suspense>
         </div>
 
@@ -117,7 +141,10 @@ export default async function CmsLayout({ children }: { children: React.ReactNod
         ))}
       </nav>
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">{children}</div>
+      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+        <ViewAsBanner user={user} />
+        {children}
+      </div>
     </div>
   )
 }

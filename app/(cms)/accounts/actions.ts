@@ -16,7 +16,9 @@ import {
   type ActionResult,
 } from '@/lib/customer-fields'
 import { accountDetailsSchema, vaRequestEditSchema, type AccountDetailsInput, type VaRequestEditInput } from '@/lib/account-details-fields'
-import { nightDifferentialHours, shiftHours, subTicketCode } from '@/lib/onboarding-fields'
+import { subTicketCode } from '@/lib/onboarding-fields'
+import { recordScheduleChange, scheduleColumns, snapshotOfColumns } from '@/lib/request-schedule'
+import { snapshotOf } from '@/lib/request-schedule-fields'
 
 const NO_ACCESS = "You don't have permission to change this account."
 
@@ -183,29 +185,26 @@ export async function updateVaRequest(accountId: string, requestId: string, inpu
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Check the request.' }
   const r = parsed.data
 
-  const before = await prisma.ticketRequest.findUnique({ where: { id: requestId }, include: { ticket: { select: { accountId: true, customerId: true, ticketNumber: true } } } })
+  const before = await prisma.ticketRequest.findUnique({ where: { id: requestId }, include: { ticket: { select: { id: true, accountId: true, customerId: true, ticketNumber: true, phase: true } } } })
   if (!before || before.ticket.accountId !== accountId) return { ok: false, error: 'That request isn’t on this account.' }
 
-  const fixed = r.scheduleType === 'DAILY_FIXED'
-  const daily = fixed || r.scheduleType === 'DAILY_FLEXIBLE'
+  // The schedule columns as the service request's schedule editor sets
+  // them (lib/request-schedule.ts), so the change goes into the request's
+  // schedule history the same way.
+  const schedule = scheduleColumns({ ...r, hoursPerDay: r.hoursPerDay, timeZone: r.timeZone })
   const [y, m, d] = r.targetStartDate.split('-').map(Number)
   const data = {
+    ...schedule,
     service: r.service,
     numberOfVas: r.numberOfVas,
-    scheduleType: r.scheduleType,
-    hoursPerDay: r.scheduleType === 'DAILY_FLEXIBLE' ? r.hoursPerDay : fixed ? shiftHours(r.startTimePht, r.endTimePht) : null,
-    hoursPerWeek: r.scheduleType === 'WEEKLY_FLEXIBLE' ? r.hoursPerWeek : null,
-    hoursPerMonth: r.scheduleType === 'MONTHLY' ? r.hoursPerMonth : null,
-    projectHours: r.scheduleType === 'PROJECT' ? r.projectHours : null,
-    startTimePht: fixed ? r.startTimePht : null,
-    endTimePht: fixed ? r.endTimePht : null,
-    workDays: daily ? r.workDays : [],
-    nightDifferential: fixed ? nightDifferentialHours(r.startTimePht, r.endTimePht) > 0 : r.nightDifferential,
-    additionalHours: r.additionalHours || null,
+    // A flexible schedule's night differential is ticked by hand.
+    nightDifferential: r.scheduleType === 'DAILY_FIXED' ? schedule.nightDifferential : r.nightDifferential,
     targetStartDate: new Date(Date.UTC(y, m - 1, d)),
     tasks: r.tasks,
     tools: r.tools || null,
     taskTracker: r.taskTracker,
+    timeZone: r.timeZone || null,
+    mustHaves: r.mustHaves || null,
   }
   const n = (x: unknown) => (x == null ? null : Number(x))
   const old = {
@@ -225,17 +224,25 @@ export async function updateVaRequest(accountId: string, requestId: string, inpu
     tasks: before.tasks,
     tools: before.tools,
     taskTracker: before.taskTracker,
+    timeZone: before.timeZone,
+    mustHaves: before.mustHaves,
   }
 
   await prisma.$transaction(async (tx) => {
     await tx.ticketRequest.update({ where: { id: requestId }, data })
+    // The schedule goes into the request's schedule history (and waits for
+    // Executive Support's check while the request is open); the hours for
+    // each day are in that entry, not the field-by-field lines.
+    await recordScheduleChange(tx, actor, before.ticket, before, snapshotOf(before), snapshotOfColumns(schedule))
+    const { dayHours, ...plain } = data
+    void dayHours
     await logActivity(
       tx,
       actor,
       fieldChanges(
         { entityType: 'Ticket', entityId: before.ticketId, entityLabel: subTicketCode(before.ticket.ticketNumber, before.lineNo), customerId: before.ticket.customerId },
         old,
-        { ...data, targetStartDate: r.targetStartDate }
+        { ...plain, targetStartDate: r.targetStartDate }
       )
     )
   })

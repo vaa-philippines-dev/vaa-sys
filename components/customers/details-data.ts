@@ -1,4 +1,4 @@
-import { REGIONS, subTicketCode, ticketCode } from '@/lib/onboarding-fields'
+import { REGIONS, dayHoursFor, dayHoursFromJson, subTicketCode, ticketCode } from '@/lib/onboarding-fields'
 import type { ContactEdit, EditableAccount } from '@/lib/account-details-fields'
 import type { getCustomer } from '@/lib/customers'
 
@@ -58,12 +58,17 @@ export function editableAccount(a: Pick<Account, 'id' | 'accountCode' | 'name' |
         startTimePht: r.startTimePht ?? '',
         endTimePht: r.endTimePht ?? '',
         workDays: r.workDays as EditableAccount['tickets'][number]['requests'][number]['workDays'],
+        // Older requests have no hours for each day: the usual hours on their work days.
+        dayHours:
+          dayHoursFor({ scheduleType: r.scheduleType, dayHours: dayHoursFromJson(r.dayHours), workDays: r.workDays, hoursPerDay: num(r.hoursPerDay), startTimePht: r.startTimePht, endTimePht: r.endTimePht }) ?? null,
         nightDifferential: r.nightDifferential,
         additionalHours: r.additionalHours ?? '',
         targetStartDate: r.targetStartDate.toISOString().slice(0, 10),
         tasks: r.tasks ?? '',
         tools: r.tools ?? '',
         taskTracker: r.taskTracker,
+        timeZone: r.timeZone ?? '',
+        mustHaves: r.mustHaves ?? '',
       })),
     })),
   }

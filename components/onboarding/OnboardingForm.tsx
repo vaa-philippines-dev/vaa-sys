@@ -16,11 +16,22 @@ import {
   PAYMENT_LABELS,
   PLATFORMS,
   REGIONS,
+  NO_DAY_HOURS,
+  SCHEDULES_IN_GROUP,
+  SCHEDULE_GROUPS,
+  SCHEDULE_GROUP_LABELS,
   SCHEDULE_HINTS,
   SCHEDULE_LABELS,
-  SCHEDULE_TYPES,
   SERVICE_OFFERINGS,
   WORK_DAYS,
+  dayHoursText,
+  fillDayHours,
+  hasDayHours,
+  isDaily,
+  scheduleGroupOf,
+  usualDayHours,
+  weeklyHoursOf,
+  workDaysOf,
   emptyPart1,
   emptyPart3,
   emptyVaRequest,
@@ -154,13 +165,14 @@ const numValue = (v: number | null) => (v == null || Number.isNaN(v) ? '' : v)
 const toggle = <T,>(list: T[], item: T, order: readonly T[]) => (list.includes(item) ? list.filter((x) => x !== item) : order.filter((x) => x === item || list.includes(x)))
 
 function scheduleSummary(r: VaRequestDraft, timeZone: string) {
-  const days = r.workDays.join(', ')
+  const days = hasDayHours(r.dayHours) ? dayHoursText(r.dayHours) : r.workDays.join(', ')
   if (r.scheduleType === 'WEEKLY_FLEXIBLE') return `${r.hoursPerWeek} hours a week, flexible`
   if (r.scheduleType === 'MONTHLY') return `${r.hoursPerMonth} hours a month, flexible`
-  if (r.scheduleType === 'DAILY_FLEXIBLE') return `${r.hoursPerDay} hours a day, flexible (${days})`
+  if (r.scheduleType === 'DAILY_FLEXIBLE') return `flexible hours (${days})`
   if (r.scheduleType === 'DAILY_FIXED') {
-    const local = `${time12(phtToZoneTime(r.startTimePht, timeZone, r.targetStartDate))}–${time12(phtToZoneTime(r.endTimePht, timeZone, r.targetStartDate))}`
-    return `${local} your time, ${time12(r.startTimePht)}–${time12(r.endTimePht)} Philippine time (${days})`
+    const zone = r.timeZone || timeZone
+    const local = `${time12(phtToZoneTime(r.startTimePht, zone, r.targetStartDate))}–${time12(phtToZoneTime(r.endTimePht, zone, r.targetStartDate))}`
+    return `${local} ${r.timeZone ? r.timeZone.replace(/_/g, ' ') : 'your time'}, ${time12(r.startTimePht)}–${time12(r.endTimePht)} Philippine time (${days})`
   }
   if (r.scheduleType === 'PROJECT') return `${r.projectHours} project hours`
   return ''
@@ -314,8 +326,30 @@ export function OnboardingForm({
     }))
   // A secondary focal person means there is a secondary contact to fill in.
   const setFocal = (focalContact: Part1Draft['focalContact']) => setP1((v) => ({ ...v, focalContact, hasSecondary: v.hasSecondary || focalContact === 'SECONDARY' }))
-  const setRequest = (i: number, patch: Partial<VaRequestDraft>) => setRequests((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)))
-  const toggleDay = (i: number, day: (typeof WORK_DAYS)[number]) => setRequests((rs) => rs.map((r, j) => (j === i ? { ...r, workDays: toggle(r.workDays, day, WORK_DAYS) } : r)))
+  // Setting the hours a day (or a fixed shift) fills the work days' hours,
+  // Mon–Fri to start with; each day can then be changed, Sat and Sun too.
+  const setRequest = (i: number, patch: Partial<VaRequestDraft>) =>
+    setRequests((rs) =>
+      rs.map((r, j) => {
+        if (j !== i) return r
+        const next = { ...r, ...patch }
+        const refill = 'hoursPerDay' in patch || 'startTimePht' in patch || 'endTimePht' in patch || ('scheduleType' in patch && !hasDayHours(next.dayHours))
+        if (isDaily(next.scheduleType) && refill) {
+          const perDay = usualDayHours(next)
+          if (perDay != null) next.dayHours = fillDayHours(next.dayHours ?? [...NO_DAY_HOURS], perDay, next.workDays)
+        }
+        if (isDaily(next.scheduleType) && hasDayHours(next.dayHours)) next.workDays = workDaysOf(next.dayHours)
+        return next
+      })
+    )
+  const setDayHours = (i: number, day: number, hours: number | null) =>
+    setRequests((rs) =>
+      rs.map((r, j) => {
+        if (j !== i) return r
+        const dayHours = (r.dayHours ?? [...NO_DAY_HOURS]).map((h, k) => (k === day ? hours : h))
+        return { ...r, dayHours, workDays: workDaysOf(dayHours) }
+      })
+    )
   const setAnswer = (scenarioId: string, index: number, rating: number) => setAnswers((a) => setRating(a, scenarioId, index, rating))
 
   const go = (next: number) => {
@@ -626,6 +660,8 @@ export function OnboardingForm({
             const nightHours = fixedTimes ? nightDifferentialHours(r.startTimePht, r.endTimePht) : 0
             const daily = r.scheduleType === 'DAILY_FIXED' || r.scheduleType === 'DAILY_FLEXIBLE'
             const below = minimumIssues(r, min)
+            // This service's time zone: its own, or the company's.
+            const rz = r.timeZone || timeZone
             const invalid = (field: keyof typeof below) => (below[field] ? { 'aria-invalid': true, 'aria-describedby': `r${i}-${field}-error` } : {})
             return (
               <section key={i} className="space-y-4 rounded-xl border bg-card p-5">
@@ -658,6 +694,21 @@ export function OnboardingForm({
                   >
                     <Input id={`r${i}-date`} type="date" value={r.targetStartDate} onChange={(e) => setRequest(i, { targetStartDate: e.target.value })} className="sm:max-w-xs" />
                   </Field>
+                  <Field
+                    id={`r${i}-tz`}
+                    label="Time zone for this service"
+                    hint="If this VA works with someone in another time zone. Fixed start and end times are entered in it."
+                    className="sm:col-span-2"
+                  >
+                    <NativeSelect id={`r${i}-tz`} value={r.timeZone} onChange={(e) => setRequest(i, { timeZone: e.target.value })} className="sm:max-w-sm">
+                      <option value="">{timeZone ? `Same as your company (${timeZoneLabel(timeZone)})` : 'Same as your company'}</option>
+                      {timeZones.map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </NativeSelect>
+                  </Field>
                 </div>
 
                 <div className="space-y-4 rounded-lg bg-muted/40 p-4">
@@ -671,16 +722,35 @@ export function OnboardingForm({
                     </p>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
-                    <Field id={`r${i}-schedule`} label="Work hour type" required hint={r.scheduleType ? SCHEDULE_HINTS[r.scheduleType] : undefined} className="sm:col-span-2">
-                      <NativeSelect id={`r${i}-schedule`} value={r.scheduleType} onChange={(e) => setRequest(i, { scheduleType: e.target.value as VaRequestDraft['scheduleType'] })} className="sm:max-w-xs">
-                        <option value="">Choose a work hour type</option>
-                        {SCHEDULE_TYPES.map((s) => (
-                          <option key={s} value={s}>
-                            {SCHEDULE_LABELS[s]}
+                    <Field id={`r${i}-group`} label="Schedule type" required hint={r.scheduleType === 'PROJECT' ? SCHEDULE_HINTS.PROJECT : 'Regular is daily, weekly or monthly hours; project-based is a total number of hours.'}>
+                      <NativeSelect
+                        id={`r${i}-group`}
+                        value={r.scheduleType ? scheduleGroupOf(r.scheduleType) : ''}
+                        // Regular starts at daily fixed time (8 AM–5 PM PH time), the usual request.
+                        onChange={(e) => {
+                          const g = e.target.value
+                          setRequest(i, { scheduleType: g === 'PROJECT_BASED' ? 'PROJECT' : g === 'REGULAR' ? (r.scheduleType && r.scheduleType !== 'PROJECT' ? r.scheduleType : 'DAILY_FIXED') : '' })
+                        }}
+                      >
+                        <option value="">Choose one</option>
+                        {SCHEDULE_GROUPS.map((g) => (
+                          <option key={g} value={g}>
+                            {SCHEDULE_GROUP_LABELS[g]}
                           </option>
                         ))}
                       </NativeSelect>
                     </Field>
+                    {r.scheduleType && r.scheduleType !== 'PROJECT' && (
+                      <Field id={`r${i}-schedule`} label="Regular schedule" required hint={SCHEDULE_HINTS[r.scheduleType]}>
+                        <NativeSelect id={`r${i}-schedule`} value={r.scheduleType} onChange={(e) => setRequest(i, { scheduleType: e.target.value as VaRequestDraft['scheduleType'] })}>
+                          {SCHEDULES_IN_GROUP.REGULAR.map((s) => (
+                            <option key={s} value={s}>
+                              {SCHEDULE_LABELS[s]}
+                            </option>
+                          ))}
+                        </NativeSelect>
+                      </Field>
+                    )}
 
                     {r.scheduleType === 'WEEKLY_FLEXIBLE' && (
                       <Field id={`r${i}-hoursPerWeek`} label="Work hours per week" required error={below.hoursPerWeek}>
@@ -738,20 +808,20 @@ export function OnboardingForm({
                     {r.scheduleType === 'DAILY_FIXED' && (
                       <div className="space-y-2 sm:col-span-2">
                         <div className="grid gap-4 sm:grid-cols-2">
-                          <Field id={`r${i}-start`} label={`Start time (${zoneOnDate(timeZone, r.targetStartDate)})`} required>
+                          <Field id={`r${i}-start`} label={`Start time (${zoneOnDate(rz, r.targetStartDate)})`} required>
                             <Input
                               id={`r${i}-start`}
                               type="time"
-                              value={phtToZoneTime(r.startTimePht, timeZone, r.targetStartDate)}
-                              onChange={(e) => setRequest(i, { startTimePht: zoneTimeToPht(e.target.value, timeZone, r.targetStartDate) })}
+                              value={phtToZoneTime(r.startTimePht, rz, r.targetStartDate)}
+                              onChange={(e) => setRequest(i, { startTimePht: zoneTimeToPht(e.target.value, rz, r.targetStartDate) })}
                             />
                           </Field>
-                          <Field id={`r${i}-endTimePht`} label={`End time (${zoneOnDate(timeZone, r.targetStartDate)})`} required error={below.endTimePht}>
+                          <Field id={`r${i}-endTimePht`} label={`End time (${zoneOnDate(rz, r.targetStartDate)})`} required error={below.endTimePht}>
                             <Input
                               id={`r${i}-endTimePht`}
                               type="time"
-                              value={phtToZoneTime(r.endTimePht, timeZone, r.targetStartDate)}
-                              onChange={(e) => setRequest(i, { endTimePht: zoneTimeToPht(e.target.value, timeZone, r.targetStartDate) })}
+                              value={phtToZoneTime(r.endTimePht, rz, r.targetStartDate)}
+                              onChange={(e) => setRequest(i, { endTimePht: zoneTimeToPht(e.target.value, rz, r.targetStartDate) })}
                               {...invalid('endTimePht')}
                             />
                           </Field>
@@ -775,30 +845,39 @@ export function OnboardingForm({
                       </div>
                     )}
                     {daily && (
-                      <fieldset className="space-y-1.5 sm:col-span-2" aria-describedby={below.workDays ? `r${i}-workDays-error` : undefined}>
+                      <fieldset className="space-y-1.5 sm:col-span-2" aria-describedby={below.workDays ? `r${i}-workDays-error` : `r${i}-days-hint`}>
                         <legend className="text-sm font-medium">
-                          Work days <span className="text-destructive">*</span>
+                          Work hours each day <span className="text-destructive">*</span>
                         </legend>
-                        <div className="flex flex-wrap gap-1.5">
-                          {WORK_DAYS.map((d) => {
-                            const on = r.workDays.includes(d)
+                        <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
+                          {WORK_DAYS.map((d, k) => {
+                            const h = r.dayHours?.[k] ?? null
                             return (
-                              <button
-                                key={d}
-                                type="button"
-                                aria-pressed={on}
-                                onClick={() => toggleDay(i, d)}
-                                className={cn(
-                                  'h-8 min-w-11 rounded-lg border px-2 text-sm',
-                                  on ? 'border-primary bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-muted',
-                                  below.workDays && 'ring-2 ring-destructive/30'
-                                )}
-                              >
-                                {d}
-                              </button>
+                              <div key={d} className="space-y-1">
+                                <label htmlFor={`r${i}-day-${d}`} className="block text-center text-xs font-medium text-muted-foreground">
+                                  {d}
+                                </label>
+                                <Input
+                                  id={`r${i}-day-${d}`}
+                                  type="number"
+                                  inputMode="decimal"
+                                  min={0}
+                                  max={24}
+                                  step={0.5}
+                                  placeholder="Off"
+                                  value={numValue(h)}
+                                  onChange={(e) => setDayHours(i, k, num(e.target.value))}
+                                  className={cn('text-center', h != null && h > 0 && 'border-primary/60 bg-primary/5', below.workDays && 'ring-2 ring-destructive/30')}
+                                />
+                              </div>
                             )
                           })}
                         </div>
+                        <p id={`r${i}-days-hint`} className="text-xs text-muted-foreground">
+                          {hasDayHours(r.dayHours) ? `${weeklyHoursOf(r.dayHours)} hours a week. ` : ''}
+                          {r.scheduleType === 'DAILY_FIXED' ? 'Your start and end times fill in the hours. ' : 'Your hours a day fill in Monday to Friday. '}
+                          Change any day, or add Saturday and Sunday. Leave a day blank for a day off.
+                        </p>
                         {below.workDays && (
                           <p id={`r${i}-workDays-error`} className="text-xs font-medium text-destructive">
                             {below.workDays}
@@ -831,6 +910,13 @@ export function OnboardingForm({
                   </Field>
                   <Field id={`r${i}-tools`} label="What are the tools that will be used by the VA?">
                     <ExampleInput id={`r${i}-tools`} value={r.tools} onChange={(e) => setRequest(i, { tools: e.target.value })} example="e.g. Seller Central, Helium 10, Google Sheets" />
+                  </Field>
+                  <Field
+                    id={`r${i}-must`}
+                    label="Must-haves or deal breakers"
+                    hint="Anything the VA must have (skills, experience, availability), or that would rule a VA out."
+                  >
+                    <Textarea id={`r${i}-must`} value={r.mustHaves} onChange={(e) => setRequest(i, { mustHaves: e.target.value })} placeholder="e.g. 2+ years with Amazon PPC; available for a weekly call on Mondays" />
                   </Field>
                 </div>
               </section>

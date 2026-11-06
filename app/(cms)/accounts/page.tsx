@@ -2,8 +2,11 @@ import Link from 'next/link'
 import { Hourglass, Search, X } from 'lucide-react'
 import { requireCan } from '@/lib/auth'
 import { listAccounts } from '@/lib/accounts'
-import { LIST_LIMIT } from '@/lib/customers'
+import { LIST_LIMIT, REAL_CUSTOMERS } from '@/lib/customers'
 import { customerScopeWhere } from '@/lib/scope'
+import { prisma } from '@/lib/prisma'
+import { vaConnectionFigures } from '@/lib/service-requests'
+import { PortfolioCard } from '@/components/cms/PortfolioCard'
 import { ACCOUNT_STATUSES, STATUS_LABELS, type AccountStatus } from '@/lib/customer-fields'
 import { STATUS_META } from '@/components/cms/status-meta'
 import { SortableTable } from '@/components/ui/sortable-table'
@@ -15,7 +18,18 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
   const user = await requireCan('accounts', 'read', '/accounts')
   const { q, status } = await searchParams
   const active = ACCOUNT_STATUSES.includes(status as AccountStatus) ? (status as AccountStatus) : null
-  const { rows, byStatus } = await listAccounts({ q, status: active ?? undefined, scope: await customerScopeWhere(user) })
+  const scope = await customerScopeWhere(user)
+  // The same figures as the Customers page, with paused accounts instead of
+  // paused customers (Nov 6, 2026). They count everything in scope, test
+  // records left out, whatever the list below shows.
+  const real = { customer: { AND: [scope ?? {}, REAL_CUSTOMERS] } }
+  const [{ rows, byStatus }, activeCustomers, activeAccounts, pausedAccounts, va] = await Promise.all([
+    listAccounts({ q, status: active ?? undefined, scope }),
+    prisma.customer.count({ where: { AND: [scope ?? {}, REAL_CUSTOMERS, { status: 'ACTIVE' }] } }),
+    prisma.account.count({ where: { ...real, status: 'ACTIVE' } }),
+    prisma.account.count({ where: { ...real, status: 'PAUSED' } }),
+    vaConnectionFigures(scope),
+  ])
 
   return (
     <main className="flex w-full flex-1 flex-col gap-5 px-4 py-6 sm:px-6">
@@ -40,6 +54,8 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
           <input id="account-search" name="q" type="search" defaultValue={q} placeholder="Account, company or customer" className="w-44 bg-transparent text-[13px] outline-none sm:w-60" />
         </form>
       </div>
+
+      <PortfolioCard activeCustomers={activeCustomers} activeAccounts={activeAccounts} paused={{ kind: 'accounts', count: pausedAccounts }} activeConnections={va.connections} vasConnected={va.vas} />
 
       <ul className="flex flex-wrap gap-2">
         {ACCOUNT_STATUSES.map((s) => (

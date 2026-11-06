@@ -6,10 +6,14 @@ import { ticketCode } from '@/lib/onboarding-fields'
 // the account's New one, and Additional, Replacement and Reliever tickets are
 // opened later. Each of its VA requests (sub-tickets) needs one VA.
 //
+// Each VA request has its own department (from its service; Nov 6, 2026), so
+// one ticket can need VAs from several departments. Any active Service
+// Manager of a request's department acts on it; nobody assigns them.
+//
 // The workflow:
-//   New: the customer's CS assigns it to a Service Department Manager.
-//   VA Assignment: that manager puts forward a main VA and buffer VAs for
-//     each VA request.
+//   VA Assignment: the department's Service Department Manager puts forward
+//     a main VA and buffer VAs for each VA request. (New was the step where
+//     the CS assigned a manager by hand; tickets no longer stop there.)
 //   VA Preparation & Mock Interview: per VA; the manager moves each prepared
 //     VA on to Rate Agreement.
 //   Rate Agreement: an HR Specialist confirms it, per VA.
@@ -53,7 +57,9 @@ export const SR_PHASE_OWNERS: Record<SrPhase, string> = {
   CLOSED_WON: '',
   CLOSED_LOST: '',
 }
-export const OPEN_PHASES: SrPhase[] = ['NEW', 'VA_ASSIGNMENT', 'VA_PREPARATION', 'RATE_AGREEMENT', 'KICKOFF_CALL', 'CONNECTION_CALL', 'START_VA']
+// The open phases in order. NEW stays in the data for older tickets but is
+// no longer a step (SQL 014 moved them to VA Assignment).
+export const OPEN_PHASES: SrPhase[] = ['VA_ASSIGNMENT', 'VA_PREPARATION', 'RATE_AGREEMENT', 'KICKOFF_CALL', 'CONNECTION_CALL', 'START_VA']
 export const isClosed = (p: SrPhase) => p === 'CLOSED_WON' || p === 'CLOSED_LOST'
 
 export const CANDIDATE_STAGES = ['VA_PREPARATION', 'RATE_AGREEMENT', 'KICKOFF_CALL', 'CONNECTION_CALL', 'START_VA', 'STARTED', 'DECLINED', 'WITHDRAWN'] as const
@@ -73,16 +79,17 @@ export const ACTIVE_STAGES: CandidateStage[] = ['VA_PREPARATION', 'RATE_AGREEMEN
 export type CandidateRole = 'MAIN' | 'BUFFER'
 export const ROLE_LABELS: Record<CandidateRole, string> = { MAIN: 'Main VA', BUFFER: 'Buffer VA' }
 
+// A VA request's own phase: its most advanced active candidate's.
+export function requestPhaseFor(stages: CandidateStage[]): SrPhase {
+  if (stages.includes('STARTED')) return 'CLOSED_WON'
+  return phaseFor({ closed: null, requests: [{ started: false, stages }] })
+}
+
 // A ticket's phase from where it stands (see the top of this file).
-export function phaseFor(t: {
-  closed: 'WON' | 'LOST' | null
-  hasManager: boolean
-  requests: { started: boolean; stages: CandidateStage[] }[]
-}): SrPhase {
+export function phaseFor(t: { closed: 'WON' | 'LOST' | null; requests: { started: boolean; stages: CandidateStage[] }[] }): SrPhase {
   if (t.closed === 'LOST') return 'CLOSED_LOST'
   if (t.requests.length > 0 && t.requests.every((r) => r.started)) return 'CLOSED_WON'
   if (t.closed === 'WON') return 'CLOSED_WON'
-  if (!t.hasManager) return 'NEW'
   const active = t.requests.filter((r) => !r.started).flatMap((r) => r.stages.filter((s) => ACTIVE_STAGES.includes(s)))
   if (active.length === 0) return 'VA_ASSIGNMENT'
   return active.reduce((best, s) => (ACTIVE_STAGES.indexOf(s) > ACTIVE_STAGES.indexOf(best) ? s : best), active[0]) as SrPhase
@@ -92,7 +99,6 @@ export const srCode = (ticketNumber: number) => ticketCode(ticketNumber)
 
 const text = (max: number) => z.string().trim().max(max)
 
-export const assignManagerSchema = z.object({ managerEmail: z.email('Pick the Service Department Manager.') })
 export const addCandidateSchema = z.object({
   requestId: z.string().min(1),
   vaProfileId: z.string().min(1, 'Pick a VA.'),

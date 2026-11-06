@@ -15,13 +15,21 @@ export const REAL_CUSTOMERS = { isTest: false } satisfies Prisma.CustomerWhereIn
 // The most rows a customer or account list loads at once.
 export const LIST_LIMIT = 5000
 
+// Customers with more than one account, whatever the accounts' statuses
+// (the Customers page's "Multiple accounts" view, Nov 6, 2026).
+export async function multiAccountCustomerIds(): Promise<string[]> {
+  const rows = await prisma.account.groupBy({ by: ['customerId'], _count: { _all: true }, having: { customerId: { _count: { gt: 1 } } } })
+  return rows.map((r) => r.customerId)
+}
+
 // scope: the person's customer scope from lib/scope.ts (null = everyone).
-export async function listCustomers(params: { q?: string; status?: string; specialist?: string; review?: boolean; scope?: Prisma.CustomerWhereInput | null }) {
+// onlyIds: limit the list to these customers (e.g. multiAccountCustomerIds).
+export async function listCustomers(params: { q?: string; status?: string; specialist?: string; review?: boolean; onlyIds?: string[]; scope?: Prisma.CustomerWhereInput | null }) {
   const q = params.q?.trim()
   const status = CUSTOMER_STATUSES.includes(params.status as CustomerStatus) ? (params.status as CustomerStatus) : undefined
   const scoped: Prisma.CustomerWhereInput = params.scope ?? {}
   const where: Prisma.CustomerWhereInput = {
-    AND: [scoped],
+    AND: [scoped, params.onlyIds ? { id: { in: params.onlyIds } } : {}],
     ...(status ? { status } : {}),
     // 'none' = no CS Specialist yet.
     ...(params.specialist ? { assignedSpecialistEmail: params.specialist === 'none' ? null : params.specialist.toLowerCase() } : {}),
@@ -49,7 +57,7 @@ export async function listCustomers(params: { q?: string; status?: string; speci
         tickets: { select: { requests: { select: { numberOfVas: true } } } },
       },
     }),
-    prisma.customer.groupBy({ by: ['status'], where: { AND: [scoped, REAL_CUSTOMERS] }, _count: { _all: true } }),
+    prisma.customer.groupBy({ by: ['status'], where: { AND: [scoped, REAL_CUSTOMERS, params.onlyIds ? { id: { in: params.onlyIds } } : {}] }, _count: { _all: true } }),
   ])
   const byStatus = Object.fromEntries(counts.map((c) => [c.status, c._count._all])) as Partial<Record<CustomerStatus, number>>
   return {

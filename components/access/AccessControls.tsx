@@ -12,12 +12,13 @@ import { addAccessUser, changeAccessRole, setAccessActive } from '@/app/(cms)/ac
 import { DEPARTMENT_ROLES, ROLE_LABELS, type AccessRole } from '@/lib/access-fields'
 
 type Department = { id: string; name: string }
-// Workforce staff with a company mailbox, and the role they have now (if any).
-type Person = { email: string; name: string; current: string | null }
+// VAA Workforce's Staff list with a company mailbox, and the role they have
+// now (if any). Those who have left (left) are shown but can't be picked.
+type Person = { email: string; name: string; current: string | null; detail: string | null; left: boolean }
 
 const OTHER = '__other__'
 
-// Pick the person by name from VAA Workforce's staff list; "Someone else"
+// Pick the person by name from VAA Workforce's Staff list; "Someone else"
 // takes a typed email for anyone not on it (the server still checks that
 // they have an active Workforce account).
 export function AddAccessForm({ roles, departments, people }: { roles: AccessRole[]; departments: Department[]; people: Person[] }) {
@@ -52,12 +53,28 @@ export function AddAccessForm({ roles, departments, people }: { roles: AccessRol
           <Label htmlFor="access-person">Person</Label>
           <NativeSelect id="access-person" value={picked} onChange={(e) => setPicked(e.target.value)} disabled={pending}>
             <option value="">Pick a name…</option>
-            {people.map((p) => (
-              <option key={p.email} value={p.email}>
-                {p.name} · {p.email}
-                {p.current ? ` (now ${p.current})` : ''}
-              </option>
-            ))}
+            <optgroup label="Staff (VAA Workforce)">
+              {people
+                .filter((p) => !p.left)
+                .map((p) => (
+                  <option key={p.email} value={p.email}>
+                    {p.name}
+                    {p.detail ? ` · ${p.detail}` : ''}
+                    {p.current ? ` (now ${p.current})` : ''}
+                  </option>
+                ))}
+            </optgroup>
+            {people.some((p) => p.left) && (
+              <optgroup label="Left VAA: can’t be given access">
+                {people
+                  .filter((p) => p.left)
+                  .map((p) => (
+                    <option key={p.email} value={p.email} disabled>
+                      {p.name} · {p.detail}
+                    </option>
+                  ))}
+              </optgroup>
+            )}
             <option value={OTHER}>Someone else (type their email)</option>
           </NativeSelect>
         </div>

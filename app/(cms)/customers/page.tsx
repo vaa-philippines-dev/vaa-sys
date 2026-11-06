@@ -1,12 +1,12 @@
 import Link from 'next/link'
-import { Download, Search, Upload, X } from 'lucide-react'
+import { Building2, Download, Search, Upload, X } from 'lucide-react'
 import { ActivityFeed } from '@/components/cms/ActivityFeed'
 import { CustomerLedger, type LedgerRow } from '@/components/cms/CustomerLedger'
 import { PortfolioCard } from '@/components/cms/PortfolioCard'
 import { STATUS_META, STATUS_ORDER } from '@/components/cms/status-meta'
 import { requireArea } from '@/lib/auth'
 import { can } from '@/lib/permissions'
-import { LIST_LIMIT, REAL_CUSTOMERS, customerPortfolio, listCustomers } from '@/lib/customers'
+import { LIST_LIMIT, REAL_CUSTOMERS, customerPortfolio, listCustomers, multiAccountCustomerIds } from '@/lib/customers'
 import { vaConnectionFigures } from '@/lib/service-requests'
 import { customerScopeWhere } from '@/lib/scope'
 import { staffNames } from '@/lib/workforce'
@@ -25,29 +25,38 @@ const LEADS_SHOWN = 5
 // as Lead Management's list (listLeads in lib/customers.ts).
 const isLead = (c: { status: CustomerStatus; leadPhase: LeadPhase }) => c.status === 'PENDING' && c.leadPhase !== 'NEW_CUSTOMER_ONBOARDED'
 
-export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string; status?: string; cs?: string; review?: string; leads?: string }> }) {
+export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string; status?: string; cs?: string; review?: string; leads?: string; accounts?: string }> }) {
   const user = await requireArea('customers', '/customers')
-  const { q, status, cs, review, leads: leadsParam } = await searchParams
+  const { q, status, cs, review, leads: leadsParam, accounts } = await searchParams
   // The customers table shows Active customers unless another status is
   // picked (asked for on Nov 5, 2026); ?status=all shows every status. The
-  // CS Specialist and review views show every status, as before.
+  // CS Specialist, review and multiple-accounts views show every status.
   const canImport = can(user.role, 'customerImport', 'create')
-  const filtered = !!(cs || review)
+  // ?accounts=multi: customers with more than one account, whatever the
+  // accounts' statuses (Nov 6, 2026).
+  const multi = accounts === 'multi'
+  const filtered = !!(cs || review || multi)
   const picked = STATUS_ORDER.includes(status as CustomerStatus) ? (status as CustomerStatus) : null
   const activeStatus: CustomerStatus | null = picked ?? (status === 'all' || filtered ? null : 'ACTIVE')
 
   const now = new Date()
   const scope = await customerScopeWhere(user)
-  const filters = { q, specialist: cs, review: review === '1', scope }
+  const multiIds = await multiAccountCustomerIds()
+  const filters = { q, specialist: cs, review: review === '1', onlyIds: multi ? multiIds : undefined, scope }
   // Leads are always Pending, so they're loaded on their own and the status
   // filter only applies to the customers table.
-  const [{ rows: customerList, byStatus: partial, total }, { rows: pendingList }, portfolio, activeAccounts, va] = await Promise.all([
+  const [{ rows: customerList, byStatus: partial, total }, { rows: pendingList }, portfolio, activeAccounts, va, multiCount] = await Promise.all([
     listCustomers({ ...filters, status: activeStatus ?? undefined }),
     listCustomers({ ...filters, status: 'PENDING' }),
     customerPortfolio(now, scope),
     prisma.account.count({ where: { status: 'ACTIVE', customer: { AND: [scope ?? {}, REAL_CUSTOMERS] } } }),
     vaConnectionFigures(scope),
+    prisma.customer.count({ where: { AND: [scope ?? {}, REAL_CUSTOMERS, { id: { in: multiIds } }] } }),
   ])
+  // The figures card counts every customer, whatever view the table shows.
+  const [activeCustomers, pausedCustomers] = multi
+    ? await Promise.all(['ACTIVE', 'PAUSED'].map((s) => prisma.customer.count({ where: { AND: [scope ?? {}, REAL_CUSTOMERS, { status: s as CustomerStatus }] } })))
+    : [partial.ACTIVE ?? 0, partial.PAUSED ?? 0]
   const rows = [...pendingList.filter(isLead), ...customerList.filter((c) => !isLead(c))]
   const byStatus = Object.fromEntries(STATUS_ORDER.map((s) => [s, partial[s] ?? 0])) as Record<CustomerStatus, number>
   const [names, vaCounts] = await Promise.all([staffNames(rows.map((r) => r.assignedSpecialistEmail ?? '')), startedVaCountsByCustomer(prisma, rows.map((r) => r.id))])
@@ -75,10 +84,11 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   const allLeads = leadsParam === 'all'
   const shownLeads = allLeads ? leadRows : leadRows.slice(0, LEADS_SHOWN)
   // The same page and filters, with one of them changed.
-  const pageHref = (next: { status?: string | null; leads?: boolean }) => {
+  const pageHref = (next: { status?: string | null; leads?: boolean; multi?: boolean }) => {
     const p = new URLSearchParams()
     const st = next.status === undefined ? status : next.status
-    for (const [k, v] of Object.entries({ q, status: st, cs, review, leads: (next.leads ?? allLeads) ? 'all' : null })) if (v) p.set(k, v)
+    const acc = (next.multi ?? multi) ? 'multi' : null
+    for (const [k, v] of Object.entries({ q, status: st, cs, review, accounts: acc, leads: (next.leads ?? allLeads) ? 'all' : null })) if (v) p.set(k, v)
     const s = p.toString()
     return s ? `/customers?${s}` : '/customers'
   }
@@ -103,7 +113,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         <div>
           <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Customer Management</p>
           <h1 className="mt-1 flex items-center gap-2 font-display text-2xl font-semibold">
-            {cs === 'none' ? 'Without a CS Specialist' : review === '1' ? 'Waiting for review' : 'Customers'}
+            {cs === 'none' ? 'Without a CS Specialist' : review === '1' ? 'Waiting for review' : multi ? 'Customers with multiple accounts' : 'Customers'}
             {filtered && (
               <Link href="/customers" className="rounded-full p-1 text-muted-foreground hover:bg-muted" title="Back to all customers" aria-label="Back to all customers">
                 <X className="h-3.5 w-3.5" />
@@ -112,9 +122,18 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
           </h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+        <Link
+          href={pageHref({ multi: !multi, status: null })}
+          aria-pressed={multi}
+          title="Customers with more than one account, whatever the accounts’ statuses"
+          className={cn('flex h-9 items-center gap-1.5 rounded-xl border px-3 text-sm font-medium', multi ? 'border-primary bg-primary text-primary-foreground' : 'bg-card hover:bg-muted')}
+        >
+          <Building2 className="h-4 w-4" /> Multiple accounts <span className="tabular-nums opacity-75">{multiCount}</span>
+        </Link>
         <form action="/customers" className="flex h-9 items-center gap-2 rounded-xl border bg-card px-3">
           {status && <input type="hidden" name="status" value={status} />}
           {cs && <input type="hidden" name="cs" value={cs} />}
+          {multi && <input type="hidden" name="accounts" value="multi" />}
           <Search className="h-3.5 w-3.5 text-muted-foreground" />
           <label htmlFor="customer-search" className="sr-only">
             Search customers
@@ -148,8 +167,8 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
       </div>
 
       <PortfolioCard
-        activeCustomers={byStatus.ACTIVE}
-        pausedCustomers={byStatus.PAUSED}
+        activeCustomers={activeCustomers}
+        paused={{ kind: 'customers', count: pausedCustomers }}
         activeAccounts={activeAccounts}
         activeConnections={va.connections}
         vasConnected={va.vas}

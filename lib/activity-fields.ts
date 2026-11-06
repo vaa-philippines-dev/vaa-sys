@@ -2,7 +2,7 @@
 // are free text in the table so later modules can add their own; list them
 // here so the Activity Logs page can filter and label them.
 
-export const ENTITY_TYPES = ['Customer', 'Account', 'Contract', 'ContractSection', 'Setting', 'Access', 'Takeover', 'ServiceRequest', 'VaConnection'] as const
+export const ENTITY_TYPES = ['Customer', 'Account', 'Contract', 'ContractSection', 'Setting', 'Access', 'Takeover', 'ServiceRequest', 'VaConnection', 'RateAgreement'] as const
 
 export const ACTIVITY_ACTIONS = [
   'CREATE',
@@ -31,6 +31,7 @@ export const ACTIVITY_ACTIONS = [
   'CONTRACT_CONFIRMED',
   'REQUEST_TYPE_CHANGED',
   'HANDOFF_COMPLETED',
+  'VIEW_AS',
 ] as const
 
 export const ACTION_LABELS: Record<string, string> = {
@@ -61,6 +62,8 @@ export const ACTION_LABELS: Record<string, string> = {
   CONTRACT_CONFIRMED: 'Contract and payment confirmed',
   REQUEST_TYPE_CHANGED: 'Request type changed',
   HANDOFF_COMPLETED: 'Customer onboarded',
+  // An admin viewing the app as someone else (lib/view-as.ts).
+  VIEW_AS: 'Viewed as',
 }
 
 const TERMINAL = ['TERMINATED', 'CANCELLED']

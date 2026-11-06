@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { nightDifferentialHours, shiftHours, type ScheduleType } from '@/lib/onboarding-fields'
+import { WORK_DAYS, dayHoursText, hasDayHours, nightDifferentialHours, shiftHours, type DayHours, type ScheduleType } from '@/lib/onboarding-fields'
 
 // Client-safe: how a bill is worked out, its labels and its form schemas.
 // The rules are the "Initial Billing Process — Summary & Guide" doc (Oct 26,
@@ -148,6 +148,8 @@ export type RequestForBill = {
   startTimePht: string | null
   endTimePht: string | null
   workDays: string[]
+  // Hours for each day, Mon..Sun, when the request has them.
+  dayHours?: DayHours | null
 }
 
 export type FirstPeriod = { periodStart: string; periodEnd: string | null; hours: number; ndHours: number; basis: string }
@@ -170,6 +172,27 @@ export function firstPeriod(r: RequestForBill): FirstPeriod {
     const fixed = r.scheduleType === 'DAILY_FIXED' && !!r.startTimePht && !!r.endTimePht
     const perDay = fixed ? shiftHours(r.startTimePht!, r.endTimePht!) : (r.hoursPerDay ?? 0)
     const ndPerDay = fixed ? nightDifferentialHours(r.startTimePht!, r.endTimePht!) : 0
+    // Hours for each day (Nov 6, 2026): each date in the period counts its
+    // weekday's hours, so a 4-hour Saturday bills 4 hours.
+    if (hasDayHours(r.dayHours)) {
+      const byDay = new Map(WORK_DAYS.map((day, i) => [day as string, r.dayHours![i] ?? 0]))
+      let hours = 0
+      let days = 0
+      for (let d = parseDay(start); d <= parseDay(end); d = new Date(d.getTime() + 86_400_000)) {
+        const h = byDay.get(DAY_NAMES[d.getUTCDay()]) ?? 0
+        if (h > 0) {
+          hours += h
+          days++
+        }
+      }
+      return {
+        periodStart: start,
+        periodEnd: end,
+        hours: round2(hours),
+        ndHours: round2(ndPerDay * days),
+        basis: `${dayHoursText(r.dayHours)} over ${days} workday${days === 1 ? '' : 's'} (${range})${ndPerDay ? `, ${hoursText(ndPerDay)} a day in ND` : ''}`,
+      }
+    }
     const days = countWorkdays(start, end, r.workDays)
     return {
       periodStart: start,

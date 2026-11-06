@@ -11,7 +11,8 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 import { CustomerEditForm } from '@/components/customers/CustomerPanels'
 import { updateAccountDetails, updateVaRequest } from '@/app/(cms)/accounts/actions'
-import { INVOICE_SOURCES, PAYMENT_LABELS, PAYMENT_METHODS, PLATFORMS, REGIONS, SCHEDULE_LABELS, SCHEDULE_TYPES, SERVICE_OFFERINGS, WORK_DAYS, timeZoneOptions } from '@/lib/onboarding-fields'
+import { INVOICE_SOURCES, NO_DAY_HOURS, PAYMENT_LABELS, PAYMENT_METHODS, PLATFORMS, REGIONS, SERVICE_OFFERINGS, timeZoneOptions, workDaysOf } from '@/lib/onboarding-fields'
+import { ScheduleFields } from '@/components/requests/ScheduleFields'
 import type { AccountDetailsInput, ContactEdit, EditableAccount, EditableRequest } from '@/lib/account-details-fields'
 
 // The Details section on a customer's and an account's page in Customer
@@ -309,9 +310,8 @@ function VaRequestForm({ accountId, request }: { accountId: string; request: Edi
   const [pending, start] = useTransition()
   const p = `vr-${request.id}`
   const setText = (k: keyof EditableRequest) => (e: { target: { value: string } }) => setR((s) => ({ ...s, [k]: e.target.value }))
-  const setNum = (k: 'numberOfVas' | 'hoursPerDay' | 'hoursPerWeek' | 'hoursPerMonth' | 'projectHours') => (e: { target: { value: string } }) =>
-    setR((s) => ({ ...s, [k]: e.target.value === '' ? (k === 'numberOfVas' ? Number.NaN : null) : Number(e.target.value) }))
-  const daily = r.scheduleType === 'DAILY_FIXED' || r.scheduleType === 'DAILY_FLEXIBLE'
+  const setNum = (k: 'numberOfVas') => (e: { target: { value: string } }) => setR((s) => ({ ...s, [k]: e.target.value === '' ? Number.NaN : Number(e.target.value) }))
+  const zones = useMemo(() => timeZoneOptions(), [])
 
   const save = () =>
     start(async () => {
@@ -351,65 +351,35 @@ function VaRequestForm({ accountId, request }: { accountId: string; request: Edi
         <Field id={`${p}-start`} label="Target start">
           <Input id={`${p}-start`} type="date" value={r.targetStartDate} onChange={setText('targetStartDate')} disabled={pending} />
         </Field>
-        <Field id={`${p}-sched`} label="Work hour type">
-          <NativeSelect id={`${p}-sched`} value={r.scheduleType} onChange={setText('scheduleType')} disabled={pending}>
-            {SCHEDULE_TYPES.map((s) => (
-              <option key={s} value={s}>
-                {SCHEDULE_LABELS[s]}
+        <Field id={`${p}-tz`} label="Client time zone">
+          <NativeSelect id={`${p}-tz`} value={r.timeZone ?? ''} onChange={setText('timeZone')} disabled={pending}>
+            <option value="">The account’s</option>
+            {zones.map((z) => (
+              <option key={z.value} value={z.value}>
+                {z.label}
               </option>
             ))}
           </NativeSelect>
         </Field>
-        {r.scheduleType === 'DAILY_FIXED' && (
-          <>
-            <Field id={`${p}-from`} label="Start (PH time)">
-              <Input id={`${p}-from`} type="time" value={r.startTimePht} onChange={setText('startTimePht')} disabled={pending} />
-            </Field>
-            <Field id={`${p}-to`} label="End (PH time)">
-              <Input id={`${p}-to`} type="time" value={r.endTimePht} onChange={setText('endTimePht')} disabled={pending} />
-            </Field>
-          </>
-        )}
-        {r.scheduleType === 'DAILY_FLEXIBLE' && (
-          <Field id={`${p}-hpd`} label="Hours a day">
-            <Input id={`${p}-hpd`} type="number" min={0} step="0.5" value={r.hoursPerDay ?? ''} onChange={setNum('hoursPerDay')} disabled={pending} />
-          </Field>
-        )}
-        {r.scheduleType === 'WEEKLY_FLEXIBLE' && (
-          <Field id={`${p}-hpw`} label="Hours a week">
-            <Input id={`${p}-hpw`} type="number" min={0} step="0.5" value={r.hoursPerWeek ?? ''} onChange={setNum('hoursPerWeek')} disabled={pending} />
-          </Field>
-        )}
-        {r.scheduleType === 'MONTHLY' && (
-          <Field id={`${p}-hpm`} label="Hours a month">
-            <Input id={`${p}-hpm`} type="number" min={0} step="0.5" value={r.hoursPerMonth ?? ''} onChange={setNum('hoursPerMonth')} disabled={pending} />
-          </Field>
-        )}
-        {r.scheduleType === 'PROJECT' && (
-          <Field id={`${p}-proj`} label="Project hours">
-            <Input id={`${p}-proj`} type="number" min={0} step="0.5" value={r.projectHours ?? ''} onChange={setNum('projectHours')} disabled={pending} />
-          </Field>
-        )}
       </div>
-      {daily && (
-        <fieldset className="space-y-1.5">
-          <legend className="text-sm font-medium">Work days</legend>
-          <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-            {WORK_DAYS.map((d) => (
-              <label key={d} className="flex items-center gap-1.5 text-sm">
-                <input
-                  type="checkbox"
-                  className="h-3.5 w-3.5 accent-primary"
-                  checked={r.workDays.includes(d)}
-                  onChange={(e) => setR((s) => ({ ...s, workDays: e.target.checked ? WORK_DAYS.filter((x) => x === d || s.workDays.includes(x)) : s.workDays.filter((x) => x !== d) }))}
-                  disabled={pending}
-                />
-                {d}
-              </label>
-            ))}
-          </div>
-        </fieldset>
-      )}
+      {/* A schedule saved here goes into the request's schedule history
+          (and, while its service request is open, waits for Executive Support). */}
+      <ScheduleFields
+        id={`${p}-schedule`}
+        value={{
+          scheduleType: r.scheduleType,
+          hoursPerDay: r.hoursPerDay ?? null,
+          hoursPerWeek: r.hoursPerWeek ?? null,
+          hoursPerMonth: r.hoursPerMonth ?? null,
+          projectHours: r.projectHours ?? null,
+          startTimePht: r.startTimePht,
+          endTimePht: r.endTimePht,
+          dayHours: r.dayHours ?? [...NO_DAY_HOURS],
+          additionalHours: r.additionalHours,
+        }}
+        onChange={(s) => setR((x) => ({ ...x, ...s, scheduleType: s.scheduleType || x.scheduleType, workDays: workDaysOf(s.dayHours) }))}
+        disabled={pending}
+      />
       <div className="grid gap-3 sm:grid-cols-3">
         {r.scheduleType !== 'DAILY_FIXED' && (
           <label className="flex items-center gap-2 pt-6 text-sm">
@@ -417,10 +387,7 @@ function VaRequestForm({ accountId, request }: { accountId: string; request: Edi
             Night differential applies
           </label>
         )}
-        <Field id={`${p}-add`} label="Additional hours">
-          <Input id={`${p}-add`} value={r.additionalHours} onChange={setText('additionalHours')} placeholder="e.g. 1H Sat or Sun" disabled={pending} />
-        </Field>
-        <Field id={`${p}-tt`} label="Task tracker">
+        <Field id={`${p}-tt`} label="Time tracker">
           <NativeSelect
             id={`${p}-tt`}
             value={r.taskTracker == null ? '' : r.taskTracker ? 'yes' : 'no'}
@@ -440,6 +407,9 @@ function VaRequestForm({ accountId, request }: { accountId: string; request: Edi
         </Field>
         <Field id={`${p}-tools`} label="Tools">
           <Textarea id={`${p}-tools`} value={r.tools} onChange={setText('tools')} rows={3} disabled={pending} />
+        </Field>
+        <Field id={`${p}-must`} label="Must-haves or deal breakers" wide>
+          <Textarea id={`${p}-must`} value={r.mustHaves ?? ''} onChange={setText('mustHaves')} rows={2} disabled={pending} />
         </Field>
       </div>
       {error && (

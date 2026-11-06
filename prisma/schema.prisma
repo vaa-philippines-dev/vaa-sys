@@ -664,10 +664,13 @@ model Ticket {
   // The onboarding form's ticket is the account's New one.
   type                   ServiceRequestType  @default(NEW)
   // A cache of the phase its candidates add up to (the most advanced one).
-  phase                  ServiceRequestPhase @default(NEW)
+  // New tickets start in VA Assignment (Nov 6, 2026); NEW is older data.
+  phase                  ServiceRequestPhase @default(VA_ASSIGNMENT)
   phaseChangedAt         DateTime            @default(now()) @map("phase_changed_at")
   // The Service Department Manager the customer's CS assigned it to, and
-  // their department (a public.departments id, read with raw SQL).
+  // their department (a public.departments id, read with raw SQL). Older
+  // tickets only: since Nov 6, 2026 each VA request has its own department
+  // (ticket_requests.department_id) and any of its managers acts.
   managerEmail           String?             @map("manager_email")
   departmentId           String?             @map("department_id")
   managerAssignedAt      DateTime?           @map("manager_assigned_at")
@@ -675,10 +678,18 @@ model Ticket {
   closedAt               DateTime?           @map("closed_at")
   closedByEmail          String?             @map("closed_by_email")
   closedReason           String?             @map("closed_reason")
+  // The customer's focal person for this request (Nov 6, 2026), when it
+  // isn't the account's focal contact. Set by the ticket import.
+  focalName              String?             @map("focal_name")
+  focalEmail             String?             @map("focal_email")
+  focalPhone             String?             @map("focal_phone")
+  focalRole              String?             @map("focal_role")
 
-  requests    TicketRequest[]
-  candidates  ServiceRequestCandidate[]
-  connections VaConnection[]
+  requests        TicketRequest[]
+  candidates      ServiceRequestCandidate[]
+  connections     VaConnection[]
+  scheduleChanges ScheduleChange[]
+  rateAgreements  RateAgreement[]
 
   @@index([customerId])
   @@index([accountId])
@@ -766,7 +777,8 @@ model ServiceRequestCandidate {
   createdAt            DateTime       @default(now()) @map("created_at")
   updatedAt            DateTime       @updatedAt @map("updated_at")
 
-  connection VaConnection?
+  connection    VaConnection?
+  rateAgreement RateAgreement?
 
   @@unique([requestId, vaProfileId])
   @@index([ticketId])
@@ -857,14 +869,132 @@ model TicketRequest {
   tools                 String?
   requestGroup          RequestGroup @default(REGULAR) @map("request_group")
   requestGroupSetBy     String?      @map("request_group_set_by")
+  // Daily schedules (Nov 6, 2026): hours for each day, {"Mon": 8, ..., "Sun": 0}.
+  // workDays are the days above 0. Null on older requests: hoursPerDay on workDays.
+  dayHours              Json?        @map("day_hours")
+  // The client's time zone for this request; null = the account's.
+  timeZone              String?      @map("time_zone")
+  // "Must-haves or deal breakers" from the onboarding form.
+  mustHaves             String?      @map("must_haves")
+  // The Workforce service department this VA comes from (public.departments
+  // id), worked out from the service and changeable by the CS. Its active
+  // Service Managers act on the request (lib/request-departments.ts).
+  departmentId          String?      @map("department_id")
   createdAt             DateTime     @default(now()) @map("created_at")
   updatedAt             DateTime     @updatedAt @map("updated_at")
 
-  invoiceItems InvoiceItem[]
-  candidates   ServiceRequestCandidate[]
+  invoiceItems    InvoiceItem[]
+  candidates      ServiceRequestCandidate[]
+  scheduleChanges ScheduleChange[]
+  rateAgreements  RateAgreement[]
 
   @@unique([ticketId, lineNo])
   @@map("ticket_requests")
+  @@schema("vaa_sys")
+}
+
+// Every change to a VA request's schedule (Nov 6, 2026; lib/request-schedule.ts),
+// kept for good so a connected VA's schedule can be followed. A change while
+// the service request is still open affects the initial bill: it needs
+// Executive Support's check (needsReview until reviewedAt), and the VA can't
+// be marked started until then.
+model ScheduleChange {
+  id              String        @id @default(cuid())
+  ticketId        String        @map("ticket_id")
+  ticket          Ticket        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  requestId       String        @map("request_id")
+  request         TicketRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  changedAt       DateTime      @default(now()) @map("changed_at")
+  changedByEmail  String        @map("changed_by_email")
+  // SCHEDULE, or SERVICE (Nov 6, 2026): the request's service and department
+  // changed. A service change on an open New ticket needs the same check.
+  kind            String        @default("SCHEDULE")
+  // The schedule fields before and after (lib/request-schedule.ts ScheduleSnapshot),
+  // or for SERVICE the service and department (ServiceSnapshot).
+  before          Json
+  after           Json
+  // The ticket's phase when it changed.
+  phase           String
+  needsReview     Boolean       @default(false) @map("needs_review")
+  reviewedAt      DateTime?     @map("reviewed_at")
+  reviewedByEmail String?       @map("reviewed_by_email")
+  reviewNote      String?       @map("review_note")
+
+  @@index([ticketId])
+  @@index([requestId])
+  @@index([needsReview, reviewedAt])
+  @@map("schedule_changes")
+  @@schema("vaa_sys")
+}
+
+// Where a Rate Agreement is (Nov 6, 2026). HR walks it through these in
+// order; at VA_ACKNOWLEDGED the VA moves on to the Kick-off Call.
+enum RateAgreementStatus {
+  WAITING
+  PREPARED
+  SCHEDULE_CONFIRMED
+  PAYROLL_ACKNOWLEDGED
+  SENT_TO_VA
+  VA_ACKNOWLEDGED
+  CANCELLED
+
+  @@schema("vaa_sys")
+}
+
+enum RateAgreementBond {
+  NONE
+  TRAINING
+  PERFORMANCE
+  BOTH
+
+  @@schema("vaa_sys")
+}
+
+// One VA's Rate Agreement on a service request (lib/rate-agreements.ts),
+// made when the Service Department Manager moves the VA to Rate Agreement.
+// An HR Manager assigns it to an HR Specialist, who fills in the terms
+// (bonds, night differential, incremental wage increase: the contract's to
+// start with) and records each step. It's cancelled with its ticket or VA.
+// The rate itself isn't stored here: it's the service's confidential VA
+// Base Rate (lib/rates.ts), shown only to rate viewers.
+model RateAgreement {
+  id                       String                  @id @default(cuid())
+  ticketId                 String                  @map("ticket_id")
+  ticket                   Ticket                  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  requestId                String                  @map("request_id")
+  request                  TicketRequest           @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  candidateId              String                  @unique @map("candidate_id")
+  candidate                ServiceRequestCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  status                   RateAgreementStatus     @default(WAITING)
+  statusChangedAt          DateTime                @default(now()) @map("status_changed_at")
+  assignedToEmail          String?                 @map("assigned_to_email")
+  assignedByEmail          String?                 @map("assigned_by_email")
+  assignedAt               DateTime?               @map("assigned_at")
+  // Null until HR sets them; the page starts from the account's contract.
+  bond                     RateAgreementBond?
+  nightDifferential        Boolean?                @map("night_differential")
+  incrementalWage          Boolean?                @map("incremental_wage")
+  notes                    String?
+  preparedAt               DateTime?               @map("prepared_at")
+  preparedByEmail          String?                 @map("prepared_by_email")
+  scheduleConfirmedAt      DateTime?               @map("schedule_confirmed_at")
+  scheduleConfirmedByEmail String?                 @map("schedule_confirmed_by_email")
+  payrollAckAt             DateTime?               @map("payroll_ack_at")
+  payrollAckByEmail        String?                 @map("payroll_ack_by_email")
+  // The day the Rate Agreement was sent to the VA, as HR enters it.
+  sentOn                   DateTime?               @map("sent_on") @db.Date
+  sentByEmail              String?                 @map("sent_by_email")
+  vaAckAt                  DateTime?               @map("va_ack_at")
+  vaAckByEmail             String?                 @map("va_ack_by_email")
+  cancelledAt              DateTime?               @map("cancelled_at")
+  cancelledReason          String?                 @map("cancelled_reason")
+  createdAt                DateTime                @default(now()) @map("created_at")
+  updatedAt                DateTime                @updatedAt @map("updated_at")
+
+  @@index([ticketId])
+  @@index([status])
+  @@index([assignedToEmail])
+  @@map("rate_agreements")
   @@schema("vaa_sys")
 }
 

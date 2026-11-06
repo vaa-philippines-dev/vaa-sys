@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { logActivity } from '@/lib/activity'
 import { dateOnly, dayString, manilaToday } from '@/lib/customer-fields'
+import { dayHoursFromJson } from '@/lib/onboarding-fields'
 import {
   BILLING_DEFAULTS,
   billDefaultsFor,
@@ -249,6 +250,7 @@ export async function createInitialDraft(actor: Actor, customerId: string): Prom
       startTimePht: r.startTimePht,
       endTimePht: r.endTimePht,
       workDays: r.workDays,
+      dayHours: dayHoursFromJson(r.dayHours),
     })
     return {
       ticketRequestId: r.id,

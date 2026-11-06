@@ -1,14 +1,15 @@
 'use client'
 
 import { useEffect, useState, useTransition } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { Check, Loader2, Search, UserPlus, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
-import { assignServiceManager, assignVa, closeAsLost, findVas, moveVa } from '@/app/(cms)/service-requests/actions'
+import { assignVa, changeRequestServiceAction, closeAsLost, findVas, moveVa } from '@/app/(cms)/service-requests/actions'
 import type { CandidateStage, VaOption } from '@/lib/service-request-fields'
 
 // The buttons on a service request's page. The page works out who may take
@@ -28,37 +29,134 @@ function useAction() {
   return { pending, run }
 }
 
-export function AssignManagerForm({ ticketId, managers, current }: { ticketId: string; managers: { email: string; label: string }[]; current: string | null }) {
-  const [email, setEmail] = useState(current ?? '')
-  const { pending, run } = useAction()
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault()
-        run(() => assignServiceManager(ticketId, email), 'Service Department Manager assigned.')
-      }}
-      className="flex flex-col gap-2 sm:flex-row sm:items-end"
-    >
-      <div className="flex-1 space-y-1.5">
-        <Label htmlFor="sr-manager">Service Department Manager</Label>
-        <NativeSelect id="sr-manager" value={email} onChange={(e) => setEmail(e.target.value)} disabled={pending}>
-          <option value="">Pick one…</option>
-          {managers.map((m) => (
-            <option key={m.email} value={m.email}>
-              {m.label}
-            </option>
-          ))}
-        </NativeSelect>
-        {managers.length === 0 && <p className="text-xs text-muted-foreground">No Service Managers yet. Add them on the Access page, with their department.</p>}
-      </div>
-      <Button type="submit" disabled={!email || email === current || pending}>
-        {pending && <Loader2 className="animate-spin" />} {current ? 'Reassign' : 'Assign'}
+// The customer's CS changes a VA request's service and department (Nov 6,
+// 2026): pick them, then confirm the change shown before and after. Picking
+// a service moves the department to that service's. On a New request
+// Executive Support checks the change before the VA can start.
+export function RequestServiceChange({
+  requestId,
+  service,
+  departmentId,
+  departments,
+  services,
+  serviceDepartments,
+  isNew,
+}: {
+  requestId: string
+  service: string
+  departmentId: string | null
+  departments: { id: string; name: string }[]
+  services: readonly string[]
+  // Each service's own department.
+  serviceDepartments: Record<string, string | null>
+  isNew: boolean
+}) {
+  const router = useRouter()
+  const [step, setStep] = useState<'closed' | 'pick' | 'confirm'>('closed')
+  const [next, setNext] = useState({ service, departmentId: departmentId ?? '' })
+  const [pending, start] = useTransition()
+  const deptName = (id: string | null) => departments.find((d) => d.id === id)?.name ?? 'No department'
+  const options = services.includes(service) ? services : [service, ...services]
+  const changed = next.service !== service || next.departmentId !== (departmentId ?? '')
+
+  if (step === 'closed')
+    return (
+      <Button size="sm" variant="outline" onClick={() => setStep('pick')}>
+        Change service or department
       </Button>
-    </form>
+    )
+
+  const cancel = () => {
+    setNext({ service, departmentId: departmentId ?? '' })
+    setStep('closed')
+  }
+  if (step === 'confirm')
+    return (
+      <div className="w-full space-y-3 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
+        <p className="font-medium">Confirm the change to this VA request</p>
+        <dl className="grid gap-2 sm:grid-cols-2">
+          <div>
+            <dt className="text-[11px] text-muted-foreground">Now</dt>
+            <dd className="text-muted-foreground line-through decoration-muted-foreground/50">
+              {service} · {deptName(departmentId)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[11px] text-muted-foreground">After</dt>
+            <dd className="font-medium">
+              {next.service} · {deptName(next.departmentId)}
+            </dd>
+          </div>
+        </dl>
+        <p className="text-xs text-muted-foreground">
+          {next.departmentId !== (departmentId ?? '') ? `${deptName(next.departmentId)}’s Service Department Managers will act on it. ` : ''}
+          {isNew ? 'This is a New request, so Executive Support checks the change, and the VA can’t be marked started until then.' : 'The change is kept in the request’s history.'}
+        </p>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                const r = await changeRequestServiceAction(requestId, next)
+                if (!r.ok) return void toast.error(r.error)
+                toast.success(r.data.needsReview ? 'Changed. Executive Support checks it before the VA can start.' : 'Service and department changed.')
+                setStep('closed')
+                router.refresh()
+              })
+            }
+          >
+            {pending ? <Loader2 className="animate-spin" /> : <Check />} Confirm change
+          </Button>
+          <Button size="sm" variant="ghost" disabled={pending} onClick={() => setStep('pick')}>
+            Back
+          </Button>
+        </div>
+      </div>
+    )
+
+  return (
+    <div className="w-full space-y-3 rounded-lg border bg-muted/30 p-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor={`svc-${requestId}`}>Service</Label>
+          <NativeSelect
+            id={`svc-${requestId}`}
+            value={next.service}
+            onChange={(e) => setNext({ service: e.target.value, departmentId: serviceDepartments[e.target.value] ?? next.departmentId })}
+          >
+            {options.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </NativeSelect>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor={`dept-${requestId}`}>Department</Label>
+          <NativeSelect id={`dept-${requestId}`} value={next.departmentId} onChange={(e) => setNext({ ...next, departmentId: e.target.value })}>
+            {!next.departmentId && <option value="">Pick a department…</option>}
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </NativeSelect>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <Button size="sm" disabled={!changed || !next.departmentId} onClick={() => setStep('confirm')}>
+          Review change
+        </Button>
+        <Button size="sm" variant="ghost" onClick={cancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
   )
 }
 
-// Search VA Workforce's VAs (the ticket's department first) and put one
+// Search VA Workforce's VAs (the request's department first) and put one
 // forward for a VA request.
 export function AddVaForm({ ticketId, requestId, departmentId, hasMain }: { ticketId: string; requestId: string; departmentId: string | null; hasMain: boolean }) {
   const [open, setOpen] = useState(false)
@@ -131,7 +229,7 @@ export function AddVaForm({ ticketId, requestId, departmentId, hasMain }: { tick
 
 type Can = { manager: boolean; hr: boolean; cs: boolean }
 
-export function CandidateActions({ candidateId, stage, name, can }: { candidateId: string; stage: CandidateStage; name: string; can: Can }) {
+export function CandidateActions({ candidateId, stage, name, can, rateAgreementId }: { candidateId: string; stage: CandidateStage; name: string; can: Can; rateAgreementId?: string }) {
   const { pending, run } = useAction()
   const [asking, setAsking] = useState<'declined' | 'started' | null>(null)
   const [reason, setReason] = useState('')
@@ -185,11 +283,13 @@ export function CandidateActions({ candidateId, stage, name, can }: { candidateI
         Prepared · to Rate Agreement
       </Button>
     )
-  if (stage === 'RATE_AGREEMENT' && can.hr)
+  // The Rate Agreement's own page: its summary, the terms and its steps
+  // (Nov 6, 2026). The VA moves on once they acknowledge it.
+  if (stage === 'RATE_AGREEMENT' && can.hr && rateAgreementId)
     buttons.push(
-      <Button key="rc" size="sm" variant="outline" disabled={pending} onClick={() => step('confirmRate', `${name}: Rate Agreement confirmed.`)}>
+      <Link key="rc" href={`/rate-agreements/${rateAgreementId}`} className={buttonVariants({ size: 'sm', variant: 'outline' })}>
         Confirm Rate Agreement
-      </Button>
+      </Link>
     )
   if (stage === 'KICKOFF_CALL' && can.cs)
     buttons.push(

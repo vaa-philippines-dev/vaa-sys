@@ -1,4 +1,5 @@
 import { cache } from 'react'
+import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { createServerSupabase } from '@/lib/supabase/server'
@@ -22,8 +23,18 @@ export type StaffUser = {
 }
 
 // departmentId: a Service Manager's Workforce department (public.departments).
-export type SessionUser = StaffUser & { role: AccessRole | null; departmentId: string | null }
+// viewingAs: set while an admin views the app as this person (below).
+export type SessionUser = StaffUser & { role: AccessRole | null; departmentId: string | null; viewingAs?: { email: string; name: string } }
 export type Actor = SessionUser & { role: AccessRole }
+
+// "View as" (Nov 6, 2026): an admin can see vaa-sys as someone with access
+// sees it, to check what each role gets. The cookie only counts while the
+// signed-in person is an admin, so anyone else setting it gets nothing.
+// It's read-only: getActor()/getActorFor() return null while it's on, so
+// every Server Action refuses, and the confidential rates stay hidden
+// (rateViewerEmail below), since an admin who isn't a rate viewer must not
+// see them through someone who is.
+export const VIEW_AS_COOKIE = 'vaa_view_as'
 
 const ADMIN_SYSTEM_ROLES = ['SUPER_ADMIN', 'SYSTEM_ADMIN']
 // Workforce also has system and test accounts with admin roles (e.g. the
@@ -62,7 +73,23 @@ export async function resolveAccess(staff: StaffUser): Promise<{ role: AccessRol
   return access?.isActive ? { role: access.role, departmentId: access.departmentId } : { role: null, departmentId: null }
 }
 
+// Who is shown as signed in: the admin's chosen person while they view as
+// someone, otherwise the signed-in person.
 export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
+  const real = await getSignedInUser()
+  if (!real || real.role !== 'ADMIN') return real
+  const target = (await cookies()).get(VIEW_AS_COOKIE)?.value?.toLowerCase()
+  if (!target || target === real.email.toLowerCase()) return real
+  const staff = await findStaffUser(target)
+  if (!staff) return real
+  const access = await resolveAccess(staff)
+  // Only someone who can sign in; viewing as another admin shows nothing new.
+  if (!access.role || access.role === 'ADMIN') return real
+  return { ...staff, ...access, viewingAs: { email: real.email.toLowerCase(), name: displayName(real) } }
+})
+
+// The person actually signed in, whoever they're viewing as.
+export const getSignedInUser = cache(async (): Promise<SessionUser | null> => {
   let email = DEV_AUTH_BYPASS_EMAIL
   if (!email) {
     const supabase = await createServerSupabase()
@@ -103,15 +130,19 @@ export async function requireSignedIn(next?: string): Promise<Actor> {
 
 // For Server Actions: null instead of a redirect, so the caller can answer
 // with an error message.
+// Nobody acts while an admin views as someone else.
 export async function getActor(area: Area): Promise<Actor | null> {
   const user = await getCurrentUser()
-  return user && canUse(user.role, area) ? (user as Actor) : null
+  return user && !user.viewingAs && canUse(user.role, area) ? (user as Actor) : null
 }
 
 export async function getActorFor(module: Module, action: Action): Promise<Actor | null> {
   const user = await getCurrentUser()
-  return user && can(user.role, module, action) ? (user as Actor) : null
+  return user && !user.viewingAs && can(user.role, module, action) ? (user as Actor) : null
 }
+
+// The email to check the confidential rates with: nobody's while viewing as.
+export const rateViewerEmail = (user: SessionUser) => (user.viewingAs ? null : user.email)
 
 export function displayName(user: Pick<StaffUser, 'firstName' | 'lastName' | 'email'>) {
   return [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email

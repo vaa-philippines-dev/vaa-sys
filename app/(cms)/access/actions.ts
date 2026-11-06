@@ -1,12 +1,15 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { cookies } from 'next/headers'
+import { redirect } from 'next/navigation'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { findStaffUser, getActor } from '@/lib/auth'
+import { findStaffUser, getActor, getSignedInUser, VIEW_AS_COOKIE } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
-import { listServiceDepartments } from '@/lib/workforce'
-import { ACCESS_ROLES, DEPARTMENT_ROLES, grantableRoles, ROLE_LABELS, type AccessRole } from '@/lib/access-fields'
+import { listServiceDepartments, staffStatus } from '@/lib/workforce'
+import { manilaDate } from '@/lib/customer-fields'
+import { ACCESS_ROLES, DEPARTMENT_ROLES, grantableRoles, homeFor, ROLE_LABELS, type AccessRole } from '@/lib/access-fields'
 import type { ActionResult } from '@/lib/customer-fields'
 
 const NO_ACCESS = "You don't have permission to change access."
@@ -51,6 +54,13 @@ export async function addAccessUser(input: { email: string; role: string; depart
   const staff = await findStaffUser(email)
   if (!staff) return { ok: false, error: `${email} has no VAA Workforce account. Ask an admin to create one there first.` }
   if (!staff.isActive) return { ok: false, error: `${email}'s VAA Workforce account is disabled.` }
+  // Someone who has left (end of contract on Workforce's Staff list) can't be
+  // given access, even while their Workforce account is still open.
+  const member = (await staffStatus([email])).get(email)
+  if (member && !member.active) {
+    const ended = member.endedOn ? ` on ${member.endedOn.toLocaleDateString('en-PH', { ...manilaDate, timeZone: 'UTC' })}` : ''
+    return { ok: false, error: `${member.name || email} has left VAA (end of contract${ended} in VAA Workforce), so they can't be given access.` }
+  }
 
   const existing = await prisma.accessUser.findUnique({ where: { email } })
   if (existing && !grantableRoles(actor.role).includes(existing.role)) {
@@ -96,6 +106,30 @@ export async function setAccessActive(id: string, isActive: boolean): Promise<Ac
   })
   refreshAccess()
   return { ok: true, data: null }
+}
+
+// ── View as (lib/auth.ts) ──────────────────────────────────────────
+
+// An admin sees the app as someone with access sees it, read-only, until
+// they stop or eight hours pass. Each start is in the activity log.
+export async function startViewAs(email: string): Promise<ActionResult> {
+  const real = await getSignedInUser()
+  if (!real || real.role !== 'ADMIN') return { ok: false, error: 'Only admins can view as someone else.' }
+  const target = email.trim().toLowerCase()
+  const row = await prisma.accessUser.findUnique({ where: { email: target } })
+  if (!row?.isActive) return { ok: false, error: 'Pick someone who has access.' }
+  if (row.role === 'ADMIN') return { ok: false, error: 'Admins see everything already.' }
+  const staff = await findStaffUser(target)
+  if (!staff?.isActive) return { ok: false, error: 'Their VAA Workforce account is disabled, so they can’t sign in.' }
+
+  ;(await cookies()).set(VIEW_AS_COOKIE, target, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 8 * 60 * 60 })
+  await logActivity(prisma, real, { entityType: 'Access', entityId: row.id, entityLabel: target, action: 'VIEW_AS', newValue: ROLE_LABELS[row.role], notes: 'Admin started viewing the app as this person (read-only)' })
+  redirect(homeFor(row.role))
+}
+
+export async function stopViewAs(): Promise<void> {
+  ;(await cookies()).delete(VIEW_AS_COOKIE)
+  redirect('/access')
 }
 
 export async function changeAccessRole(id: string, role: AccessRole, departmentId = ''): Promise<ActionResult> {

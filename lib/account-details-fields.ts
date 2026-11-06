@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { INVOICE_SOURCES, PAYMENT_METHODS, PLATFORMS, REGIONS, SCHEDULE_TYPES, WORK_DAYS, isTimeZone } from '@/lib/onboarding-fields'
+import { INVOICE_SOURCES, PAYMENT_METHODS, PLATFORMS, REGIONS, SCHEDULE_TYPES, WORK_DAYS, dayHoursSchema, hasDayHours, isTimeZone, workDaysOf } from '@/lib/onboarding-fields'
 
 // Client-safe: Customer Management's edit of an account's onboarding details
 // (Part 1 of the form) and its tickets' VA requests (Part 2), from the
@@ -80,17 +80,24 @@ export const vaRequestEditSchema = z
     startTimePht: text(5),
     endTimePht: text(5),
     workDays: z.array(z.enum(WORK_DAYS)).max(7),
+    // Hours for each day, Mon..Sun (daily schedules); the work days follow them.
+    dayHours: dayHoursSchema,
     nightDifferential: z.boolean(),
     additionalHours: text(200),
     targetStartDate: text(10).refine((v) => /^\d{4}-\d{2}-\d{2}$/.test(v), 'Choose the target start date.'),
     tasks: text(2000),
     tools: text(1000),
     taskTracker: z.boolean().nullable(),
+    // The client's time zone for this request; blank = the account's.
+    timeZone: text(60)
+      .refine((v) => v === '' || isTimeZone(v), 'Choose a time zone from the list.')
+      .default(''),
+    mustHaves: text(2000).default(''),
   })
   .superRefine((r, ctx) => {
     const issue = (path: string, message: string) => ctx.addIssue({ code: 'custom', path: [path], message })
     const daily = r.scheduleType === 'DAILY_FIXED' || r.scheduleType === 'DAILY_FLEXIBLE'
-    if (daily && r.workDays.length === 0) issue('workDays', 'Choose the work days.')
+    if (daily && (hasDayHours(r.dayHours) ? workDaysOf(r.dayHours) : r.workDays).length === 0) issue('workDays', 'Enter the hours for at least one work day.')
     if (r.scheduleType === 'DAILY_FIXED' && (!TIME_RE.test(r.startTimePht) || !TIME_RE.test(r.endTimePht))) issue('startTimePht', 'Enter the start and end time (Philippine time).')
     if (r.scheduleType === 'DAILY_FLEXIBLE' && r.hoursPerDay == null) issue('hoursPerDay', 'Enter the hours per day.')
     if (r.scheduleType === 'WEEKLY_FLEXIBLE' && r.hoursPerWeek == null) issue('hoursPerWeek', 'Enter the hours per week.')

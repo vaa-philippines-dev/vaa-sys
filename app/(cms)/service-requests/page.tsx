@@ -1,10 +1,12 @@
 import Link from 'next/link'
-import { Search } from 'lucide-react'
+import { Search, Upload } from 'lucide-react'
 import { requireCan } from '@/lib/auth'
+import { can } from '@/lib/permissions'
 import { listServiceRequests, phaseCounts } from '@/lib/service-requests'
-import { staffNames } from '@/lib/workforce'
+import { departmentInfo, requestDepartment } from '@/lib/request-departments'
 import { manilaDate } from '@/lib/customer-fields'
-import { OPEN_PHASES, SR_PHASES, SR_PHASE_LABELS, SR_TYPE_LABELS, isClosed, srCode, type SrPhase, type SrType } from '@/lib/service-request-fields'
+import { subTicketCode } from '@/lib/onboarding-fields'
+import { OPEN_PHASES, SR_PHASES, SR_PHASE_LABELS, SR_TYPE_LABELS, isClosed, requestPhaseFor, srCode, type CandidateStage, type SrPhase, type SrType } from '@/lib/service-request-fields'
 import { SortableTable } from '@/components/ui/sortable-table'
 import { PhasePill } from '@/components/requests/PhasePill'
 import { TestBadge } from '@/components/leads/TestBadge'
@@ -19,9 +21,8 @@ export default async function ServiceRequestsPage({ searchParams }: { searchPara
   const phase: SrPhase | 'OPEN' | 'ALL' = SR_PHASES.includes(sp.phase as SrPhase) ? (sp.phase as SrPhase) : sp.phase === 'ALL' ? 'ALL' : 'OPEN'
   const mine = sp.mine === '1'
   const q = sp.q?.trim() ?? ''
-  const [tickets, counts] = await Promise.all([listServiceRequests(user, { phase, mine, q }), phaseCounts(user)])
-  const names = await staffNames(tickets.flatMap((t) => [t.managerEmail ?? '', t.customer.assignedSpecialistEmail ?? '']))
-  const name = (e: string | null) => (e ? (names.get(e) ?? e) : null)
+  const [tickets, counts, info] = await Promise.all([listServiceRequests(user, { phase, mine, q }), phaseCounts(user), departmentInfo()])
+  const deptName = (id: string | null) => (id ? (info.departments.find((d) => d.id === id)?.name ?? 'Unknown department') : null)
   const now = new Date().getTime()
   const open = OPEN_PHASES.reduce((n, p) => n + (counts[p] ?? 0), 0)
 
@@ -52,6 +53,11 @@ export default async function ServiceRequestsPage({ searchParams }: { searchPara
           <p className="mt-1 text-sm text-muted-foreground">Each ticket follows its most advanced VA candidate. Open a ticket to take the next step.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {can(user.role, 'serviceRequestImport', 'create') && (
+            <Link href="/service-requests/import" className="flex h-9 items-center gap-1.5 rounded-xl border bg-card px-3 text-sm font-medium hover:bg-muted">
+              <Upload className="h-3.5 w-3.5" /> Import
+            </Link>
+          )}
           <Link
             href={href({ mine: !mine })}
             aria-pressed={mine}
@@ -96,7 +102,7 @@ export default async function ServiceRequestsPage({ searchParams }: { searchPara
             { key: 'account', label: 'Account', className: 'px-3 py-3 font-medium' },
             { key: 'type', label: 'Type', className: 'px-3 py-3 font-medium' },
             { key: 'phase', label: 'Phase', className: 'px-3 py-3 font-medium' },
-            { key: 'manager', label: 'Service Dept. Manager', className: 'px-3 py-3 font-medium' },
+            { key: 'department', label: 'Department', className: 'px-3 py-3 font-medium' },
             { key: 'vas', label: 'VAs started', align: 'right', firstDir: 'desc', className: 'px-3 py-3 font-medium' },
             { key: 'days', label: 'In phase', align: 'right', firstDir: 'desc', className: 'py-3 pl-3 pr-5 font-medium' },
           ]}
@@ -110,6 +116,24 @@ export default async function ServiceRequestsPage({ searchParams }: { searchPara
           rows={tickets.map((t) => {
             const started = new Set(t.candidates.filter((c) => c.stage === 'STARTED').map((c) => c.requestId)).size
             const days = Math.floor((now - t.phaseChangedAt.getTime()) / 86_400_000)
+            const closed = isClosed(t.phase as SrPhase)
+            // Each VA request has its own department (Nov 6, 2026); a ticket
+            // with several VAs lists them under it.
+            const requests = t.requests.map((r) => {
+              const dept = requestDepartment(info, r)
+              const stages = t.candidates.filter((c) => c.requestId === r.id)
+              const filled = stages.find((c) => c.stage === 'STARTED')
+              return {
+                ...r,
+                dept,
+                deptName: deptName(dept),
+                managers: dept ? (info.managers.get(dept) ?? []) : [],
+                phase: filled ? ('CLOSED_WON' as const) : closed ? (t.phase as SrPhase) : requestPhaseFor(stages.map((c) => c.stage as CandidateStage)),
+                va: filled?.vaName ?? null,
+              }
+            })
+            const deptNames = [...new Set(requests.map((r) => r.deptName ?? 'No department'))]
+            const missing = closed ? 0 : requests.filter((r) => r.managers.length === 0).length
             return {
               id: t.id,
               values: {
@@ -117,10 +141,33 @@ export default async function ServiceRequestsPage({ searchParams }: { searchPara
                 account: t.account.name,
                 type: t.type,
                 phase: SR_PHASES.indexOf(t.phase as SrPhase),
-                manager: name(t.managerEmail),
+                department: deptNames.join(', '),
                 vas: started,
-                days: isClosed(t.phase as SrPhase) ? null : days,
+                days: closed ? null : days,
               },
+              after:
+                requests.length > 1
+                  ? requests.map((r) => (
+                      <tr key={r.id} className="border-b bg-muted/20 text-[12px] last:border-0">
+                        <td className="py-1.5 pl-9 pr-3 font-mono text-muted-foreground">{subTicketCode(t.ticketNumber, r.lineNo)}</td>
+                        <td className="px-3 py-1.5" colSpan={2}>
+                          {r.service}
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <PhasePill phase={r.phase} />
+                        </td>
+                        <td className="px-3 py-1.5">
+                          {r.deptName ?? <span className="text-warning">No department</span>}
+                          <span className={cn('block text-[11px]', r.managers.length ? 'text-muted-foreground' : 'text-warning')}>
+                            {r.managers.length ? r.managers.map((m) => m.name).join(', ') : closed ? '' : 'No Service Department Manager'}
+                          </span>
+                        </td>
+                        <td className="px-3 py-1.5 text-right text-muted-foreground" colSpan={2}>
+                          {r.va ? `Filled: ${r.va}` : ''}
+                        </td>
+                      </tr>
+                    ))
+                  : null,
               node: (
                 <tr key={t.id} className="group border-b last:border-0 hover:bg-muted/50">
                   <td className="relative py-2.5 pl-5 pr-3">
@@ -140,11 +187,22 @@ export default async function ServiceRequestsPage({ searchParams }: { searchPara
                   <td className="px-3 py-2.5">
                     <PhasePill phase={t.phase as SrPhase} />
                   </td>
-                  <td className="px-3 py-2.5">{name(t.managerEmail) ?? <span className="text-muted-foreground">Not assigned</span>}</td>
+                  <td className="px-3 py-2.5">
+                    {deptNames.join(', ')}
+                    <span className={cn('block text-[11px]', missing ? 'text-warning' : 'text-muted-foreground')}>
+                      {missing
+                        ? requests.length === 1
+                          ? 'No Service Department Manager'
+                          : `${missing} of ${requests.length} VA requests ${missing === 1 ? 'has' : 'have'} no Service Department Manager`
+                        : requests.length === 1
+                          ? requests[0].managers.map((m) => m.name).join(', ')
+                          : `${requests.length} VA requests`}
+                    </span>
+                  </td>
                   <td className="px-3 py-2.5 text-right tabular-nums">
                     {started} / {t.requests.length}
                   </td>
-                  <td className="py-2.5 pl-3 pr-5 text-right text-muted-foreground">{isClosed(t.phase as SrPhase) ? '–' : days === 0 ? 'Today' : `${days} d`}</td>
+                  <td className="py-2.5 pl-3 pr-5 text-right text-muted-foreground">{closed ? '–' : days === 0 ? 'Today' : `${days} d`}</td>
                 </tr>
               ),
             }

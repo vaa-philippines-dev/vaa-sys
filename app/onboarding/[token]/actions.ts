@@ -7,6 +7,7 @@ import { generateAccountCode } from '@/lib/customers'
 import { syncLeadPhase } from '@/lib/lead-phase'
 import { firstIssue, onboardingSchemaFor, part3AnswersSchema, type OnboardingInput, type Part3Answers } from '@/lib/onboarding-fields'
 import { requestRow } from '@/lib/ticket-rows'
+import { departmentForService, departmentInfo } from '@/lib/request-departments'
 import { getWorkHourMinimums } from '@/lib/settings'
 import type { ActionResult } from '@/lib/customer-fields'
 
@@ -41,7 +42,7 @@ export async function submitOnboarding(token: string, input: OnboardingInput): P
         : { name: [part1.invoice.firstName, part1.invoice.lastName].filter(Boolean).join(' '), role: part1.invoice.role, email: part1.invoice.email }
   const business = part1.business
 
-  const accountCode = await generateAccountCode()
+  const [accountCode, departments] = await Promise.all([generateAccountCode(), departmentInfo()])
   const now = new Date()
 
   try {
@@ -122,7 +123,13 @@ export async function submitOnboarding(token: string, input: OnboardingInput): P
           accountId: account.id,
           submissionId: submission.id,
           createdByEmail: 'onboarding-form',
-          requests: { create: part2.requests.flatMap((r) => Array.from({ length: r.numberOfVas }, () => r)).map((r, i) => requestRow(r, i + 1)) },
+          // Straight to each VA request's department's Service Department Managers.
+          phase: 'VA_ASSIGNMENT',
+          requests: {
+            create: part2.requests
+              .flatMap((r) => Array.from({ length: r.numberOfVas }, () => r))
+              .map((r, i) => ({ ...requestRow(r, i + 1), departmentId: departmentForService(departments, r.service) })),
+          },
         },
       })
 

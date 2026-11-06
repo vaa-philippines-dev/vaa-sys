@@ -150,10 +150,27 @@ export const minimumsSchema = z.object(
 )
 
 export const WORK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const
+export type WorkDay = (typeof WORK_DAYS)[number]
 
+// The two kinds of schedule (Nov 6, 2026): Regular is daily (fixed or
+// flexible time), weekly or monthly; Project-based is a total of hours. The
+// five work hour types stay as they are, since the initial bill works from
+// them; the forms ask for the kind first.
+export const SCHEDULE_GROUPS = ['REGULAR', 'PROJECT_BASED'] as const
+export type ScheduleGroup = (typeof SCHEDULE_GROUPS)[number]
+export const SCHEDULE_GROUP_LABELS: Record<ScheduleGroup, string> = { REGULAR: 'Regular', PROJECT_BASED: 'Project-based' }
+export const SCHEDULES_IN_GROUP: Record<ScheduleGroup, ScheduleType[]> = {
+  REGULAR: ['DAILY_FIXED', 'DAILY_FLEXIBLE', 'WEEKLY_FLEXIBLE', 'MONTHLY'],
+  PROJECT_BASED: ['PROJECT'],
+}
+export const scheduleGroupOf = (t: ScheduleType): ScheduleGroup => (t === 'PROJECT' ? 'PROJECT_BASED' : 'REGULAR')
+export const isDaily = (t: ScheduleType | '' | null | undefined) => t === 'DAILY_FIXED' || t === 'DAILY_FLEXIBLE'
+
+// The request group the Lead Manager sets. REGULAR is shown as Standard
+// (renamed Nov 6, 2026; the stored value is unchanged).
 export const REQUEST_GROUPS = ['REGULAR', 'EXPERT', 'CASUAL'] as const
 export type RequestGroup = (typeof REQUEST_GROUPS)[number]
-export const REQUEST_GROUP_LABELS: Record<RequestGroup, string> = { REGULAR: 'Regular', EXPERT: 'Expert', CASUAL: 'Casual' }
+export const REQUEST_GROUP_LABELS: Record<RequestGroup, string> = { REGULAR: 'Standard', EXPERT: 'Expert', CASUAL: 'Casual' }
 
 // Part 3, VA personality preference: ten scenarios, each with four
 // statements the customer rates from 1 (least preferred) to 5 (most
@@ -268,6 +285,24 @@ export function nightDifferentialHours(start: string, end: string): number {
 const wrap = (minutes: number) => ((minutes % 1440) + 1440) % 1440
 const toHhmm = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
 
+// The parts of a fixed shift inside the night-differential window, as
+// Philippine times (Nov 6, 2026: shown on the VA request), e.g. an 8:00 PM to
+// 5:00 AM shift → 10:00 PM–5:00 AM.
+export function nightDifferentialSpans(start: string, end: string): { from: string; to: string }[] {
+  if (!TIME_RE.test(start) || !TIME_RE.test(end)) return []
+  const s = toMinutes(start)
+  let e = toMinutes(end)
+  if (e <= s) e += 24 * 60
+  return [
+    [0, 6 * 60],
+    [22 * 60, 30 * 60],
+    [46 * 60, 54 * 60],
+  ]
+    .map(([ws, we]) => [Math.max(s, ws), Math.min(e, we)])
+    .filter(([a, b]) => b > a)
+    .map(([a, b]) => ({ from: toHhmm(wrap(a)), to: toHhmm(wrap(b)) }))
+}
+
 // The moment offsets are taken at: noon UTC on the target start date when
 // there is one (so daylight saving matches the start), else now.
 function offsetMoment(dateIso?: string) {
@@ -295,6 +330,73 @@ export function time12(hhmm: string) {
   if (!TIME_RE.test(hhmm)) return hhmm
   const [h, m] = hhmm.split(':').map(Number)
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
+}
+
+// ── Hours for each day ───────────────────────────────────────────
+
+// A daily schedule's hours for each day, in WORK_DAYS order (Mon..Sun);
+// blank or 0 is a day off. Entering the hours a day fills the work days
+// (Mon–Fri to start with), and each day can then be changed, Sat and Sun
+// included.
+export type DayHours = (number | null)[]
+
+export const NO_DAY_HOURS: DayHours = WORK_DAYS.map(() => null)
+
+const hoursOn = (d: DayHours, i: number) => (d[i] != null && !Number.isNaN(d[i]) ? d[i]! : 0)
+export const hasDayHours = (d: DayHours | null | undefined): d is DayHours => !!d && d.some((h) => h != null && !Number.isNaN(h) && h > 0)
+export const workDaysOf = (d: DayHours): WorkDay[] => WORK_DAYS.filter((_, i) => hoursOn(d, i) > 0)
+export const weeklyHoursOf = (d: DayHours) => Math.round(d.reduce<number>((sum, _, i) => sum + hoursOn(d, i), 0) * 100) / 100
+
+// The usual hours a day: a fixed shift's length, or the hours a day typed.
+export function usualDayHours(r: { scheduleType: ScheduleType | ''; hoursPerDay: number | null; startTimePht: string | null; endTimePht: string | null }): number | null {
+  if (r.scheduleType === 'DAILY_FIXED') return r.startTimePht && r.endTimePht && TIME_RE.test(r.startTimePht) && TIME_RE.test(r.endTimePht) ? shiftHours(r.startTimePht, r.endTimePht) : null
+  if (r.scheduleType === 'DAILY_FLEXIBLE') return r.hoursPerDay != null && !Number.isNaN(r.hoursPerDay) ? r.hoursPerDay : null
+  return null
+}
+
+// Put `perDay` on the weekdays worked now (Mon–Fri when none are yet).
+// Saturday and Sunday keep what was typed: they're often shorter days.
+const WEEKDAYS: readonly WorkDay[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+export function fillDayHours(d: DayHours, perDay: number | null, fallbackDays: readonly string[] = WEEKDAYS): DayHours {
+  const worked = hasDayHours(d) ? workDaysOf(d).filter((day) => WEEKDAYS.includes(day)) : []
+  const on = worked.length ? worked : (fallbackDays as WorkDay[]).filter((day) => WEEKDAYS.includes(day))
+  return WORK_DAYS.map((day, i) => (on.includes(day) ? perDay : (d[i] ?? null)))
+}
+
+// A request's hours for each day: its own when it has them, else the usual
+// hours on its work days (older requests). null when it isn't daily.
+export function dayHoursFor(r: { scheduleType: ScheduleType | ''; dayHours?: DayHours | null; workDays: readonly string[]; hoursPerDay: number | null; startTimePht: string | null; endTimePht: string | null }): DayHours | null {
+  if (!isDaily(r.scheduleType)) return null
+  if (hasDayHours(r.dayHours)) return r.dayHours
+  const perDay = usualDayHours(r)
+  return WORK_DAYS.map((day) => (r.workDays.includes(day) ? perDay : null))
+}
+
+// Stored as {"Mon": 8, ..., "Sun": 0} (ticket_requests.day_hours).
+export function dayHoursToJson(d: DayHours): Record<WorkDay, number> {
+  return Object.fromEntries(WORK_DAYS.map((day, i) => [day, hoursOn(d, i)])) as Record<WorkDay, number>
+}
+export function dayHoursFromJson(json: unknown): DayHours | null {
+  if (!json || typeof json !== 'object') return null
+  const o = json as Record<string, unknown>
+  const d = WORK_DAYS.map((day) => (typeof o[day] === 'number' && (o[day] as number) > 0 ? (o[day] as number) : null))
+  return hasDayHours(d) ? d : null
+}
+
+const fmtHours = (h: number) => `${Math.round(h * 100) / 100}`
+
+// "Mon–Fri 8h, Sat 4h": runs of days with the same hours.
+export function dayHoursText(d: DayHours): string {
+  const parts: string[] = []
+  let i = 0
+  while (i < 7) {
+    const h = hoursOn(d, i)
+    let j = i
+    while (j + 1 < 7 && hoursOn(d, j + 1) === h) j++
+    if (h > 0) parts.push(`${WORK_DAYS[i]}${j > i ? `${j === i + 1 ? ', ' : '–'}${WORK_DAYS[j]}` : ''} ${fmtHours(h)}h`)
+    i = j + 1
+  }
+  return parts.join(', ') || 'No days'
 }
 
 // ── Validation ───────────────────────────────────────────────────
@@ -379,6 +481,13 @@ export const part1Schema = z
   })
 
 const optionalNumber = z.number().nullable()
+
+// Mon..Sun hours; null when the schedule has none (or an older client didn't send them).
+export const dayHoursSchema = z
+  .array(z.number('Enter the hours as a number.').min(0, 'Use 0 or more hours.').max(24, 'A day has 24 hours at most.').nullable())
+  .length(7)
+  .nullable()
+  .default(null)
 const hoursOk = (v: number | null, ceiling: number) => v != null && !Number.isNaN(v) && v > 0 && v <= ceiling
 
 export type MinimumField = 'hoursPerDay' | 'hoursPerWeek' | 'hoursPerMonth' | 'projectHours' | 'endTimePht' | 'workDays'
@@ -387,7 +496,7 @@ export type MinimumField = 'hoursPerDay' | 'hoursPerWeek' | 'hoursPerMonth' | 'p
 // those fields in red as the customer types, and the schema rejects them.
 // Hours are only capped by what fits in a day, week or month.
 export function minimumIssues(
-  r: Pick<VaRequest, 'scheduleType' | 'hoursPerDay' | 'hoursPerWeek' | 'hoursPerMonth' | 'projectHours' | 'startTimePht' | 'endTimePht' | 'workDays'> | VaRequestDraft,
+  r: Pick<VaRequest, 'scheduleType' | 'hoursPerDay' | 'hoursPerWeek' | 'hoursPerMonth' | 'projectHours' | 'startTimePht' | 'endTimePht' | 'workDays' | 'dayHours'> | VaRequestDraft,
   min: WorkHourMinimums
 ): Partial<Record<MinimumField, string>> {
   const issues: Partial<Record<MinimumField, string>> = {}
@@ -401,8 +510,11 @@ export function minimumIssues(
     if (h < min.hoursPerDay) issues.endTimePht = `That’s ${h} hour${h === 1 ? '' : 's'}. The minimum is ${min.hoursPerDay} hours a day.`
     else perDay = h
   }
-  if (perDay != null && r.workDays.length > 0 && perDay * r.workDays.length < min.hoursPerWeek) {
-    issues.workDays = `That’s ${perDay * r.workDays.length} hours a week. The minimum is ${min.hoursPerWeek} hours a week.`
+  // A week of daily hours: the hours for each day when they're set, else the
+  // usual hours times the work days.
+  const week = isDaily(r.scheduleType) && hasDayHours(r.dayHours) ? weeklyHoursOf(r.dayHours) : perDay != null && r.workDays.length > 0 ? perDay * r.workDays.length : null
+  if (perDay != null && week != null && week < min.hoursPerWeek) {
+    issues.workDays = `That’s ${week} hours a week. The minimum is ${min.hoursPerWeek} hours a week.`
   }
   if (r.scheduleType === 'WEEKLY_FLEXIBLE' && r.hoursPerWeek != null && r.hoursPerWeek < min.hoursPerWeek) issues.hoursPerWeek = `The minimum is ${min.hoursPerWeek} hours a week.`
   if (r.scheduleType === 'MONTHLY' && r.hoursPerMonth != null && r.hoursPerMonth < min.hoursPerMonth) issues.hoursPerMonth = `The minimum is ${min.hoursPerMonth} hours a month.`
@@ -425,15 +537,23 @@ export function vaRequestSchemaFor(min: WorkHourMinimums) {
       startTimePht: text(5),
       endTimePht: text(5),
       workDays: z.array(z.enum(WORK_DAYS)).max(7),
+      // Hours for each day, Mon..Sun (daily schedules); the work days follow them.
+      dayHours: dayHoursSchema,
       additionalHours: text(200),
       taskTracker: z.boolean().nullable(),
       tasks: text(2000),
       tools: text(1000),
+      // The client's time zone for this service; blank = the company's.
+      timeZone: text(60)
+        .refine((v) => v === '' || isTimeZone(v), 'Choose a time zone from the list.')
+        .default(''),
+      mustHaves: text(2000).default(''),
     })
     .superRefine((r, ctx) => {
       const issue = (path: string, message: string) => ctx.addIssue({ code: 'custom', path: [path], message })
       const daily = r.scheduleType === 'DAILY_FIXED' || r.scheduleType === 'DAILY_FLEXIBLE'
-      if (daily && r.workDays.length === 0) issue('workDays', 'Choose the work days.')
+      // With hours for each day, the work days are the days above 0 (requestRow saves them so).
+      if (daily && (hasDayHours(r.dayHours) ? workDaysOf(r.dayHours) : r.workDays).length === 0) issue('workDays', 'Enter the hours for at least one work day.')
       if (r.scheduleType === 'DAILY_FLEXIBLE' && !hoursOk(r.hoursPerDay, 24)) issue('hoursPerDay', 'Enter the work hours per day.')
       if (r.scheduleType === 'DAILY_FIXED' && (!TIME_RE.test(r.startTimePht) || !TIME_RE.test(r.endTimePht))) issue('startTimePht', 'Enter the start and end time.')
       if (r.scheduleType === 'WEEKLY_FLEXIBLE' && !hoursOk(r.hoursPerWeek, 168)) issue('hoursPerWeek', 'Enter the work hours per week.')
@@ -506,10 +626,13 @@ export function emptyVaRequest(): VaRequestDraft {
     startTimePht: '08:00',
     endTimePht: '17:00',
     workDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+    dayHours: [...NO_DAY_HOURS],
     additionalHours: '',
     taskTracker: null,
     tasks: '',
     tools: '',
+    timeZone: '',
+    mustHaves: '',
   }
 }
 

@@ -153,15 +153,33 @@ function Services({
   showRates: boolean
   keySet: boolean
 }) {
+  // Which row is open, as "<department>:<service>", since a service offered
+  // by two departments is listed under both.
   const [editing, setEditing] = useState<string | null>(null)
   const [revealed, setRevealed] = useState(false)
   const deptName = useMemo(() => new Map(departments.map((d) => [d.id, d.name])), [departments])
   const contractLabel = useMemo(() => new Map(contracts.map((c) => [c.id, c.label])), [contracts])
   const anyLocked = !keySet
 
+  // The services grouped by department (Nov 6, 2026), departments in
+  // Workforce's tree order, then the services no department offers.
+  const groups = useMemo(() => {
+    const out: { id: string; name: string; path: string | null; status: string | null; services: OrgService[] }[] = []
+    const byId = new Map(departments.map((d) => [d.id, d]))
+    for (const { d } of treeOrder(departments)) {
+      const list = services.filter((s) => s.departmentIds.includes(d.id))
+      const status = d.status === 'ACTIVE' ? null : DEPARTMENT_STATUS_LABELS[d.status]
+      if (list.length) out.push({ id: d.id, name: d.name, path: d.parentId ? departmentPath(d.parentId, byId) || null : null, status, services: list })
+    }
+    const known = new Set(departments.map((d) => d.id))
+    const none = services.filter((s) => !s.departmentIds.some((id) => known.has(id)))
+    if (none.length) out.push({ id: 'none', name: 'No department', path: null, status: null, services: none })
+    return out
+  }, [services, departments])
+
   const columns = [
     { key: 'name', label: 'Service', className: 'py-3 pl-5 pr-3 font-medium' },
-    { key: 'departments', label: 'Departments', className: 'hidden px-3 py-3 font-medium md:table-cell' },
+    { key: 'departments', label: 'Also offered by', className: 'hidden px-3 py-3 font-medium md:table-cell' },
     { key: 'billedAs', label: 'Onboarding form service', className: 'hidden px-3 py-3 font-medium lg:table-cell' },
     { key: 'contract', label: 'Contract template', className: 'hidden px-3 py-3 font-medium lg:table-cell' },
     { key: 'jd', label: 'Job description', className: 'px-3 py-3 font-medium' },
@@ -193,74 +211,94 @@ function Services({
           The rates key isn’t set on this server, so the confidential rates can’t be read or saved here. They work on the live site, where the key is set.
         </p>
       )}
-      <div className="overflow-x-auto rounded-2xl border bg-card">
-        <SortableTable
-          className="w-full text-sm"
-          theadClassName="text-left text-[11px] uppercase tracking-wide text-muted-foreground"
-          headRowClassName="border-b"
-          columns={columns}
-          rows={services.map((s) => {
-            const depts = s.departmentIds.map((id) => deptName.get(id)).filter(Boolean).join(', ')
-            const contract = s.contractId ? (contractLabel.get(s.contractId) ?? null) : null
-            const open = editing === s.id
-            return {
-              id: s.id,
-              values: {
-                name: s.name,
-                departments: depts,
-                billedAs: s.onboardingService,
-                contract,
-                jd: s.jobDescription ? 1 : 0,
-                standard: s.rates?.standard.value ?? null,
-                vaBase: s.rates?.vaBase.value ?? null,
-              },
-              node: (
-                <tr key={s.id} className={cn('border-b last:border-b-0 align-top', !s.isActive && 'text-muted-foreground')}>
-                  <td className="py-2.5 pl-5 pr-3">
-                    <span className="font-medium">{s.name}</span>
-                    <span className="block text-[11px] text-muted-foreground">
-                      {s.category.charAt(0) + s.category.slice(1).toLowerCase()}
-                      {!s.isActive && ' · inactive in Workforce'}
-                    </span>
-                  </td>
-                  <td className="hidden px-3 py-2.5 text-[13px] md:table-cell">{depts || <span className="text-muted-foreground">None</span>}</td>
-                  <td className="hidden px-3 py-2.5 text-[13px] lg:table-cell">{s.onboardingService ?? <span className="text-muted-foreground">None</span>}</td>
-                  <td className="hidden px-3 py-2.5 text-[13px] lg:table-cell">{contract ?? <span className="text-muted-foreground">None</span>}</td>
-                  <td className="px-3 py-2.5 text-[13px]">{s.jobDescription ? 'Written' : <span className="text-muted-foreground">Not yet</span>}</td>
-                  {s.rates && (
-                    <>
-                      <td className="px-3 py-2.5 text-right text-[13px]">
-                        <RateText cell={s.rates.standard} hidden={!revealed} />
+      {groups.map((g) => (
+        <div key={g.id} className="overflow-hidden rounded-2xl border bg-card">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 border-b bg-muted/40 px-5 py-2.5">
+            <h3 className="text-sm font-semibold">
+              {g.name}
+              {g.path && <span className="ml-2 text-[11px] font-normal text-muted-foreground">{g.path}</span>}
+              {g.status && <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{g.status} in Workforce</span>}
+            </h3>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {g.services.length} service{g.services.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <SortableTable
+              className="w-full text-sm"
+              theadClassName="text-left text-[11px] uppercase tracking-wide text-muted-foreground"
+              headRowClassName="border-b"
+              columns={columns}
+              rows={g.services.map((s) => {
+                // The other departments that offer it.
+                const depts = s.departmentIds
+                  .filter((id) => id !== g.id)
+                  .map((id) => deptName.get(id))
+                  .filter(Boolean)
+                  .join(', ')
+                const contract = s.contractId ? (contractLabel.get(s.contractId) ?? null) : null
+                const key = `${g.id}:${s.id}`
+                const open = editing === key
+                return {
+                  id: s.id,
+                  values: {
+                    name: s.name,
+                    departments: depts,
+                    billedAs: s.onboardingService,
+                    contract,
+                    jd: s.jobDescription ? 1 : 0,
+                    standard: s.rates?.standard.value ?? null,
+                    vaBase: s.rates?.vaBase.value ?? null,
+                  },
+                  node: (
+                    <tr key={s.id} className={cn('border-b last:border-b-0 align-top', !s.isActive && 'text-muted-foreground')}>
+                      <td className="py-2.5 pl-5 pr-3">
+                        <span className="font-medium">{s.name}</span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {s.category.charAt(0) + s.category.slice(1).toLowerCase()}
+                          {!s.isActive && ' · inactive in Workforce'}
+                        </span>
                       </td>
-                      <td className="px-3 py-2.5 text-right text-[13px]">
-                        <RateText cell={s.rates.vaBase} hidden={!revealed} />
+                      <td className="hidden px-3 py-2.5 text-[13px] md:table-cell">{depts || <span className="text-muted-foreground">–</span>}</td>
+                      <td className="hidden px-3 py-2.5 text-[13px] lg:table-cell">{s.onboardingService ?? <span className="text-muted-foreground">None</span>}</td>
+                      <td className="hidden px-3 py-2.5 text-[13px] lg:table-cell">{contract ?? <span className="text-muted-foreground">None</span>}</td>
+                      <td className="px-3 py-2.5 text-[13px]">{s.jobDescription ? 'Written' : <span className="text-muted-foreground">Not yet</span>}</td>
+                      {s.rates && (
+                        <>
+                          <td className="px-3 py-2.5 text-right text-[13px]">
+                            <RateText cell={s.rates.standard} hidden={!revealed} />
+                          </td>
+                          <td className="px-3 py-2.5 text-right text-[13px]">
+                            <RateText cell={s.rates.vaBase} hidden={!revealed} />
+                          </td>
+                        </>
+                      )}
+                      <td className="py-2.5 pl-3 pr-5 text-right">
+                        <button
+                          type="button"
+                          onClick={() => setEditing(open ? null : key)}
+                          aria-expanded={open}
+                          className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          aria-label={`${canEdit || showRates ? 'Edit' : 'View'} ${s.name}`}
+                        >
+                          {canEdit || showRates ? <Pencil className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                        </button>
                       </td>
-                    </>
-                  )}
-                  <td className="py-2.5 pl-3 pr-5 text-right">
-                    <button
-                      type="button"
-                      onClick={() => setEditing(open ? null : s.id)}
-                      aria-expanded={open}
-                      className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                      aria-label={`${canEdit || showRates ? 'Edit' : 'View'} ${s.name}`}
-                    >
-                      {canEdit || showRates ? <Pencil className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                    </button>
-                  </td>
-                </tr>
-              ),
-              after: open ? (
-                <tr className="border-b bg-muted/30">
-                  <td colSpan={span} className="px-5 py-4">
-                    <ServicePanel service={s} services={services} contracts={contracts} canEdit={canEdit} keySet={keySet} onDone={() => setEditing(null)} />
-                  </td>
-                </tr>
-              ) : null,
-            }
-          })}
-        />
-      </div>
+                    </tr>
+                  ),
+                  after: open ? (
+                    <tr className="border-b bg-muted/30">
+                      <td colSpan={span} className="px-5 py-4">
+                        <ServicePanel service={s} services={services} contracts={contracts} canEdit={canEdit} keySet={keySet} onDone={() => setEditing(null)} />
+                      </td>
+                    </tr>
+                  ) : null,
+                }
+              })}
+            />
+          </div>
+        </div>
+      ))}
     </section>
   )
 }

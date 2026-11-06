@@ -10,6 +10,7 @@ import { EXTERNAL_SYSTEMS, type SystemLink } from '@/components/lms/systems'
 import { initialsFrom } from '@/components/lms/stage-meta'
 import { prisma } from '@/lib/prisma'
 import { requireSignedIn, displayName } from '@/lib/auth'
+import { ViewAsBanner } from '@/components/layout/ViewAsBanner'
 import { canUse, homeFor, ROLE_LABELS } from '@/lib/access-fields'
 import { can } from '@/lib/permissions'
 import { REAL_CUSTOMERS } from '@/lib/customers'
@@ -92,7 +93,10 @@ export default async function AcctLayout({ children }: { children: React.ReactNo
         ))}
       </nav>
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">{children}</div>
+      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+        <ViewAsBanner user={user} />
+        {children}
+      </div>
     </div>
   )
 }

@@ -8,7 +8,9 @@ import { dateOnly, dayString } from '@/lib/customer-fields'
 // read by header name so the columns can be in any order.
 
 export type SheetColumn<K extends string> = { key: K; header: string; width: number; note: string }
-export type SheetList<K extends string> = { key: K; title: string; values: string[] }
+// warnOnly: a value not in the list is allowed after a warning (e.g. a
+// service name from another system, mapped on the import page).
+export type SheetList<K extends string> = { key: K; title: string; values: string[]; warnOnly?: boolean }
 export type ReadRow<K extends string> = { row: number; values: Record<K, string> }
 
 export async function buildTemplate<K extends string>(opts: {
@@ -18,6 +20,12 @@ export async function buildTemplate<K extends string>(opts: {
   dateKeys: readonly K[]
   maxRows: number
   help: string[]
+  // A filled-in example on the first row, in grey italics. The import that
+  // uses it must skip it if it's left in (by a value only it has).
+  sample?: Partial<Record<K, string>>
+  // Rows to fill in instead (e.g. the rows an import held back), each with
+  // why, in a last "Problem" column the upload ignores.
+  rows?: { values: Partial<Record<K, string>>; problem: string }[]
 }): Promise<Buffer> {
   const wb = new ExcelJS.Workbook()
   wb.creator = 'vaa-sys'
@@ -49,13 +57,35 @@ export async function buildTemplate<K extends string>(opts: {
         allowBlank: true,
         formulae: [range],
         showErrorMessage: true,
-        errorStyle: 'stop',
+        errorStyle: l.warnOnly ? 'warning' : 'stop',
         errorTitle: `Pick a ${l.title.toLowerCase()}`,
         error: `Choose a ${l.title.toLowerCase()} from the list.`,
       }
     }
   }
   for (const key of opts.dateKeys) ws.getColumn(key).numFmt = 'yyyy-mm-dd'
+  const fill = (r: number, values: Partial<Record<K, string>>) =>
+    opts.columns.forEach((c, i) => {
+      const v = values[c.key]
+      if (!v) return
+      ws.getRow(r).getCell(i + 1).value = opts.dateKeys.includes(c.key) && DAY_RE.test(v) ? dateOnly(v) : v
+    })
+  if (opts.rows) {
+    const col = opts.columns.length + 1
+    ws.getColumn(col).width = 60
+    const head = ws.getRow(1).getCell(col)
+    head.value = 'Problem'
+    head.note = 'Why the row wasn’t imported. Fix the row, then import this file again; this column is ignored.'
+    opts.rows.forEach((r, i) => {
+      fill(i + 2, r.values)
+      const cell = ws.getRow(i + 2).getCell(col)
+      cell.value = r.problem
+      cell.font = { color: { argb: 'FFB42318' } }
+    })
+  } else if (opts.sample) {
+    fill(2, opts.sample)
+    ws.getRow(2).font = { italic: true, color: { argb: 'FF8A8780' } }
+  }
 
   const help = wb.addWorksheet('How to use')
   help.getColumn(1).width = 110
@@ -182,7 +212,9 @@ export function parseDay(raw: string): string | null | 'bad' {
   let day = s
   const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s)
   if (us) day = `${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`
-  if (!DAY_RE.test(day) || dayString(dateOnly(day)) !== day) return 'bad'
+  // A month or day out of range (2026-13-40) is an invalid Date, whose
+  // dayString would throw instead of reading as a bad date.
+  if (!DAY_RE.test(day) || Number.isNaN(dateOnly(day).getTime()) || dayString(dateOnly(day)) !== day) return 'bad'
   return day
 }
 

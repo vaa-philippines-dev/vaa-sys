@@ -50,6 +50,18 @@ export const MODULES = [
   // The services' confidential rates aren't a role grant: they're per person
   // (lib/rates.ts), and those people can open the page for them.
   'workforceOrg',
+  // The Service Requests Excel template and upload (/service-requests/import):
+  // adds tickets for existing accounts at any phase. Admins only.
+  'serviceRequestImport',
+  // Schedule changes on VA requests (lib/request-schedule.ts): read is the
+  // list and the notices; update is Executive Support's check of a change
+  // made while the service request was open, which affects billing.
+  'scheduleReviews',
+  // Rate Agreements (/rate-agreements, Nov 6, 2026; lib/rate-agreements.ts):
+  // read is the HR team's table and each agreement's summary; update is an
+  // HR Specialist working the ones assigned to them; create is an HR Manager
+  // assigning them. The customer's CS also confirms the schedule step.
+  'rateAgreements',
   // Later modules. Defaults follow the legacy grid; each module confirms
   // them when it is built.
   'serviceRequests',
@@ -120,10 +132,33 @@ const GRID: Record<Module, Partial<Record<AccessRole, Grant>>> = {
   testLeads: {},
   userAccess: {},
   workforceOrg: {},
+  serviceRequestImport: {},
+  // Executive Support checks schedule changes (Nov 6, 2026); Lead Management
+  // and the people running the request follow them.
+  scheduleReviews: {
+    EXECUTIVE_SUPPORT: RU,
+    EXECUTIVE: R,
+    LEAD_MANAGER: R,
+    CS_MANAGER: R,
+    CUSTOMER_SPECIALIST: R,
+    SERVICE_MANAGER: R,
+    ACCOUNTING: R,
+  },
+
+  rateAgreements: {
+    HR_MANAGER: CRU,
+    HR_SPECIALIST: RU,
+    CS_MANAGER: R,
+    CUSTOMER_SPECIALIST: R,
+    SERVICE_MANAGER: R,
+    ACCOUNTING: R,
+    EXECUTIVE: R,
+    EXECUTIVE_SUPPORT: R,
+  },
 
   // Service Requests (/service-requests, Nov 5, 2026). Who may take each
-  // step is checked in lib/service-requests.ts: the customer's CS, the
-  // ticket's Service Department Manager, HR for the Rate Agreement.
+  // step is checked in lib/service-requests.ts: the customer's CS, a Service
+  // Manager of the VA request's department, HR for the Rate Agreement.
   serviceRequests: {
     CS_MANAGER: CRUD,
     CUSTOMER_SPECIALIST: CRU,

@@ -10,50 +10,49 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 import { openServiceRequest } from '@/app/(cms)/service-requests/actions'
-import { SCHEDULE_LABELS, SCHEDULE_TYPES, SERVICE_OFFERINGS, WORK_DAYS, type ScheduleType, type VaRequest } from '@/lib/onboarding-fields'
+import { ScheduleFields, type ScheduleValue } from '@/components/requests/ScheduleFields'
+import { NO_DAY_HOURS, SERVICE_OFFERINGS, workDaysOf, type TimeZoneOption, type VaRequest } from '@/lib/onboarding-fields'
 import { SR_TYPE_LABELS, type SrType } from '@/lib/service-request-fields'
 
 // Opening a service request on an account: its type and the VAs it asks
 // for, with the same fields as the onboarding form's VA services (checked
-// by the same rules on the server). Times are Philippine time.
+// by the same rules on the server). Times are Philippine time; each VA
+// service can have its own client time zone.
 
 type Draft = {
   service: string
   numberOfVas: string
   targetStartDate: string
-  scheduleType: ScheduleType | ''
-  hoursPerDay: string
-  hoursPerWeek: string
-  hoursPerMonth: string
-  projectHours: string
-  startTimePht: string
-  endTimePht: string
-  workDays: string[]
-  additionalHours: string
+  schedule: ScheduleValue
+  timeZone: string
   taskTracker: '' | 'yes' | 'no'
   tasks: string
   tools: string
+  mustHaves: string
 }
 const empty = (): Draft => ({
   service: '',
   numberOfVas: '1',
   targetStartDate: '',
-  scheduleType: '',
-  hoursPerDay: '',
-  hoursPerWeek: '',
-  hoursPerMonth: '',
-  projectHours: '',
-  startTimePht: '',
-  endTimePht: '',
-  workDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
-  additionalHours: '',
+  schedule: {
+    scheduleType: '',
+    hoursPerDay: null,
+    hoursPerWeek: null,
+    hoursPerMonth: null,
+    projectHours: null,
+    startTimePht: '08:00',
+    endTimePht: '17:00',
+    dayHours: [...NO_DAY_HOURS],
+    additionalHours: '',
+  },
+  timeZone: '',
   taskTracker: '',
   tasks: '',
   tools: '',
+  mustHaves: '',
 })
-const num = (v: string) => (v.trim() === '' ? null : Number(v))
 
-export function NewServiceRequestForm({ accountId, types }: { accountId: string; types: SrType[] }) {
+export function NewServiceRequestForm({ accountId, types, accountTimeZone, timeZones }: { accountId: string; types: SrType[]; accountTimeZone: string | null; timeZones: TimeZoneOption[] }) {
   const router = useRouter()
   const [type, setType] = useState<SrType>(types[0])
   const [rows, setRows] = useState<Draft[]>([empty()])
@@ -69,18 +68,13 @@ export function NewServiceRequestForm({ accountId, types }: { accountId: string;
             service: r.service,
             numberOfVas: Number(r.numberOfVas),
             targetStartDate: r.targetStartDate,
-            scheduleType: r.scheduleType,
-            hoursPerDay: num(r.hoursPerDay),
-            hoursPerWeek: num(r.hoursPerWeek),
-            hoursPerMonth: num(r.hoursPerMonth),
-            projectHours: num(r.projectHours),
-            startTimePht: r.startTimePht,
-            endTimePht: r.endTimePht,
-            workDays: r.workDays,
-            additionalHours: r.additionalHours,
+            ...r.schedule,
+            workDays: workDaysOf(r.schedule.dayHours),
             taskTracker: r.taskTracker === '' ? null : r.taskTracker === 'yes',
             tasks: r.tasks,
             tools: r.tools,
+            timeZone: r.timeZone,
+            mustHaves: r.mustHaves,
           }) as VaRequest
       )
       const result = await openServiceRequest(accountId, type, requests)
@@ -104,9 +98,8 @@ export function NewServiceRequestForm({ accountId, types }: { accountId: string;
 
       {rows.map((r, i) => {
         const id = (k: string) => `sr-${i}-${k}`
-        const daily = r.scheduleType === 'DAILY_FIXED' || r.scheduleType === 'DAILY_FLEXIBLE'
         return (
-          <fieldset key={i} className="space-y-3 rounded-xl border bg-card p-4">
+          <fieldset key={i} className="space-y-4 rounded-xl border bg-card p-4">
             <legend className="px-1 text-sm font-semibold">VA service {rows.length > 1 ? i + 1 : ''}</legend>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="space-y-1.5 sm:col-span-2">
@@ -129,85 +122,35 @@ export function NewServiceRequestForm({ accountId, types }: { accountId: string;
                 <Input id={id('start')} type="date" value={r.targetStartDate} onChange={(e) => set(i, { targetStartDate: e.target.value })} disabled={pending} />
               </div>
               <div className="space-y-1.5 sm:col-span-2">
-                <Label htmlFor={id('schedule')}>Work hour type</Label>
-                <NativeSelect id={id('schedule')} value={r.scheduleType} onChange={(e) => set(i, { scheduleType: e.target.value as ScheduleType })} disabled={pending}>
-                  <option value="">Pick one…</option>
-                  {SCHEDULE_TYPES.map((s) => (
-                    <option key={s} value={s}>
-                      {SCHEDULE_LABELS[s]}
+                <Label htmlFor={id('tz')}>Client time zone</Label>
+                <NativeSelect id={id('tz')} value={r.timeZone} onChange={(e) => set(i, { timeZone: e.target.value })} disabled={pending}>
+                  <option value="">{accountTimeZone ? `The account’s (${accountTimeZone.replace(/_/g, ' ')})` : 'The account’s (not set)'}</option>
+                  {timeZones.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
                     </option>
                   ))}
                 </NativeSelect>
               </div>
-              {r.scheduleType === 'DAILY_FIXED' && (
-                <>
-                  <div className="space-y-1.5">
-                    <Label htmlFor={id('from')}>Starts (PH time)</Label>
-                    <Input id={id('from')} type="time" value={r.startTimePht} onChange={(e) => set(i, { startTimePht: e.target.value })} disabled={pending} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor={id('to')}>Ends (PH time)</Label>
-                    <Input id={id('to')} type="time" value={r.endTimePht} onChange={(e) => set(i, { endTimePht: e.target.value })} disabled={pending} />
-                  </div>
-                </>
-              )}
-              {r.scheduleType === 'DAILY_FLEXIBLE' && (
-                <div className="space-y-1.5">
-                  <Label htmlFor={id('hpd')}>Hours a day</Label>
-                  <Input id={id('hpd')} type="number" min={0} step={0.5} value={r.hoursPerDay} onChange={(e) => set(i, { hoursPerDay: e.target.value })} disabled={pending} />
-                </div>
-              )}
-              {r.scheduleType === 'WEEKLY_FLEXIBLE' && (
-                <div className="space-y-1.5">
-                  <Label htmlFor={id('hpw')}>Hours a week</Label>
-                  <Input id={id('hpw')} type="number" min={0} step={0.5} value={r.hoursPerWeek} onChange={(e) => set(i, { hoursPerWeek: e.target.value })} disabled={pending} />
-                </div>
-              )}
-              {r.scheduleType === 'MONTHLY' && (
-                <div className="space-y-1.5">
-                  <Label htmlFor={id('hpm')}>Hours a month</Label>
-                  <Input id={id('hpm')} type="number" min={0} step={0.5} value={r.hoursPerMonth} onChange={(e) => set(i, { hoursPerMonth: e.target.value })} disabled={pending} />
-                </div>
-              )}
-              {r.scheduleType === 'PROJECT' && (
-                <div className="space-y-1.5">
-                  <Label htmlFor={id('ph')}>Project hours</Label>
-                  <Input id={id('ph')} type="number" min={0} step={0.5} value={r.projectHours} onChange={(e) => set(i, { projectHours: e.target.value })} disabled={pending} />
-                </div>
-              )}
             </div>
-            {daily && (
-              <fieldset className="space-y-1.5">
-                <legend className="text-sm font-medium">Work days</legend>
-                <div className="flex flex-wrap gap-3">
-                  {WORK_DAYS.map((d) => (
-                    <label key={d} className="flex items-center gap-1.5 text-sm">
-                      <input
-                        type="checkbox"
-                        className="h-3.5 w-3.5 accent-primary"
-                        checked={r.workDays.includes(d)}
-                        onChange={(e) => set(i, { workDays: e.target.checked ? [...r.workDays, d] : r.workDays.filter((x) => x !== d) })}
-                        disabled={pending}
-                      />
-                      {d}
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-            )}
+            <ScheduleFields
+              id={id('schedule')}
+              value={r.schedule}
+              onChange={(schedule) => set(i, { schedule })}
+              disabled={pending}
+              clientTimeZone={r.timeZone || accountTimeZone}
+              targetStartDate={r.targetStartDate}
+            />
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label htmlFor={id('extra')}>Additional hours</Label>
-                <Input id={id('extra')} value={r.additionalHours} onChange={(e) => set(i, { additionalHours: e.target.value })} placeholder="e.g. 1H Sat or Sun" disabled={pending} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor={id('tracker')}>Task tracker</Label>
+                <Label htmlFor={id('tracker')}>Time tracker</Label>
                 <NativeSelect id={id('tracker')} value={r.taskTracker} onChange={(e) => set(i, { taskTracker: e.target.value as Draft['taskTracker'] })} disabled={pending}>
                   <option value="">Not asked</option>
                   <option value="yes">Yes</option>
                   <option value="no">No</option>
                 </NativeSelect>
               </div>
+              <div />
               <div className="space-y-1.5">
                 <Label htmlFor={id('tasks')}>Tasks</Label>
                 <Textarea id={id('tasks')} value={r.tasks} onChange={(e) => set(i, { tasks: e.target.value })} rows={3} disabled={pending} />
@@ -215,6 +158,10 @@ export function NewServiceRequestForm({ accountId, types }: { accountId: string;
               <div className="space-y-1.5">
                 <Label htmlFor={id('tools')}>Tools</Label>
                 <Textarea id={id('tools')} value={r.tools} onChange={(e) => set(i, { tools: e.target.value })} rows={3} disabled={pending} />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor={id('must')}>Must-haves or deal breakers</Label>
+                <Textarea id={id('must')} value={r.mustHaves} onChange={(e) => set(i, { mustHaves: e.target.value })} rows={2} disabled={pending} />
               </div>
             </div>
             {rows.length > 1 && (
