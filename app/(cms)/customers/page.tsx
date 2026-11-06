@@ -6,7 +6,8 @@ import { PortfolioCard } from '@/components/cms/PortfolioCard'
 import { STATUS_META, STATUS_ORDER } from '@/components/cms/status-meta'
 import { requireArea } from '@/lib/auth'
 import { can } from '@/lib/permissions'
-import { customerPortfolio, listCustomers } from '@/lib/customers'
+import { LIST_LIMIT, REAL_CUSTOMERS, customerPortfolio, listCustomers } from '@/lib/customers'
+import { vaConnectionFigures } from '@/lib/service-requests'
 import { customerScopeWhere } from '@/lib/scope'
 import { staffNames } from '@/lib/workforce'
 import { prisma } from '@/lib/prisma'
@@ -40,10 +41,12 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   const filters = { q, specialist: cs, review: review === '1', scope }
   // Leads are always Pending, so they're loaded on their own and the status
   // filter only applies to the customers table.
-  const [{ rows: customerList, byStatus: partial, total }, { rows: pendingList }, portfolio] = await Promise.all([
+  const [{ rows: customerList, byStatus: partial, total }, { rows: pendingList }, portfolio, activeAccounts, va] = await Promise.all([
     listCustomers({ ...filters, status: activeStatus ?? undefined }),
     listCustomers({ ...filters, status: 'PENDING' }),
     customerPortfolio(now, scope),
+    prisma.account.count({ where: { status: 'ACTIVE', customer: { AND: [scope ?? {}, REAL_CUSTOMERS] } } }),
+    vaConnectionFigures(scope),
   ])
   const rows = [...pendingList.filter(isLead), ...customerList.filter((c) => !isLead(c))]
   const byStatus = Object.fromEntries(STATUS_ORDER.map((s) => [s, partial[s] ?? 0])) as Record<CustomerStatus, number>
@@ -144,7 +147,13 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         </div>
       </div>
 
-      <PortfolioCard byStatus={byStatus} total={total} accounts={portfolio.accounts} vasRequested={portfolio.vasRequested} changesThisWeek={portfolio.changesThisWeek} />
+      <PortfolioCard
+        activeCustomers={byStatus.ACTIVE}
+        pausedCustomers={byStatus.PAUSED}
+        activeAccounts={activeAccounts}
+        activeConnections={va.connections}
+        vasConnected={va.vas}
+      />
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="flex min-w-0 flex-col gap-5">
@@ -190,6 +199,9 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                 })}
               </nav>
             </div>
+            {customerList.length >= LIST_LIMIT && (
+              <p className="px-1 text-[12px] text-warning">Showing the newest {LIST_LIMIT.toLocaleString()} customers. Pick a status or search to narrow it down.</p>
+            )}
             {customerRows.length === 0 ? (
               <div className="rounded-2xl border border-dashed bg-card px-6 py-14 text-center">
                 <p className="text-sm font-medium">{q ? `Nothing matches “${q}”.` : activeStatus ? `No ${STATUS_META[activeStatus].label.toLowerCase()} customers.` : 'No customers yet.'}</p>

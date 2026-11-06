@@ -5,7 +5,8 @@ import { prisma } from '@/lib/prisma'
 import { findLink } from '@/lib/onboarding'
 import { generateAccountCode } from '@/lib/customers'
 import { syncLeadPhase } from '@/lib/lead-phase'
-import { firstIssue, nightDifferentialHours, onboardingSchemaFor, part3AnswersSchema, shiftHours, type OnboardingInput, type Part3Answers, type VaRequest } from '@/lib/onboarding-fields'
+import { firstIssue, onboardingSchemaFor, part3AnswersSchema, type OnboardingInput, type Part3Answers } from '@/lib/onboarding-fields'
+import { requestRow } from '@/lib/ticket-rows'
 import { getWorkHourMinimums } from '@/lib/settings'
 import type { ActionResult } from '@/lib/customer-fields'
 
@@ -146,35 +147,8 @@ export async function submitOnboarding(token: string, input: OnboardingInput): P
   return { ok: true, data: null }
 }
 
-// One VA as a sub-ticket row. Hours are stored per schedule type;
-// a fixed shift's hours and night differential are worked out from its times.
-// The platform now lives on the account, so new rows leave it empty.
-function requestRow(r: VaRequest, lineNo: number) {
-  const fixed = r.scheduleType === 'DAILY_FIXED'
-  const daily = fixed || r.scheduleType === 'DAILY_FLEXIBLE'
-  const [y, m, d] = r.targetStartDate.split('-').map(Number)
-  return {
-    lineNo,
-    service: r.service,
-    numberOfVas: 1,
-    scheduleType: r.scheduleType,
-    hoursPerWeek: r.scheduleType === 'WEEKLY_FLEXIBLE' ? r.hoursPerWeek : null,
-    hoursPerMonth: r.scheduleType === 'MONTHLY' ? r.hoursPerMonth : null,
-    hoursPerDay: r.scheduleType === 'DAILY_FLEXIBLE' ? r.hoursPerDay : fixed ? shiftHours(r.startTimePht, r.endTimePht) : null,
-    projectHours: r.scheduleType === 'PROJECT' ? r.projectHours : null,
-    startTimePht: fixed ? r.startTimePht : null,
-    endTimePht: fixed ? r.endTimePht : null,
-    workDays: daily ? r.workDays : [],
-    nightDifferential: fixed && nightDifferentialHours(r.startTimePht, r.endTimePht) > 0,
-    additionalHours: r.additionalHours || null,
-    // Date.UTC, never new Date('YYYY-MM-DD') parsing in local time.
-    targetStartDate: new Date(Date.UTC(y, m - 1, d)),
-    // The column predates tasks being optional, so no answer is stored as ''.
-    tasks: r.tasks,
-    tools: r.tools || null,
-    taskTracker: r.taskTracker,
-  }
-}
+// One VA per sub-ticket row: lib/ticket-rows.ts, shared with service
+// requests opened in Customer Management.
 
 // Part 3 on its own, for a customer who skipped it when they first submitted.
 export async function submitPart3(token: string, answers: Part3Answers): Promise<ActionResult> {

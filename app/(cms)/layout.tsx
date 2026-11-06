@@ -23,12 +23,15 @@ import type { CustomerStatus } from '@/lib/customer-fields'
 export default async function CmsLayout({ children }: { children: React.ReactNode }) {
   const user = await requireSignedIn()
   const r = user.role
-  if (!can(r, 'customers') && !can(r, 'access') && !can(r, 'settings')) redirect(homeFor(r))
+  if (!can(r, 'customers') && !can(r, 'access') && !can(r, 'settings') && !can(r, 'serviceRequests')) redirect(homeFor(r))
 
   const scope = await customerScopeWhere(user)
-  const [counts, reviews] = await Promise.all([
-    prisma.customer.groupBy({ by: ['status'], where: { AND: [scope ?? {}, REAL_CUSTOMERS] }, _count: { _all: true } }),
+  const [counts, reviews, openRequests] = await Promise.all([
+    can(r, 'customers') ? prisma.customer.groupBy({ by: ['status'], where: { AND: [scope ?? {}, REAL_CUSTOMERS] }, _count: { _all: true } }) : Promise.resolve([]),
     can(r, 'approvals', 'update') ? countPendingReviews() : Promise.resolve(0),
+    can(r, 'serviceRequests')
+      ? prisma.ticket.count({ where: { phase: { notIn: ['CLOSED_WON', 'CLOSED_LOST'] }, customer: { AND: [scope ?? {}, REAL_CUSTOMERS] } } }).catch(() => 0)
+      : Promise.resolve(0),
   ])
   const byStatus = Object.fromEntries(STATUS_ORDER.map((s) => [s, counts.find((c) => c.status === s)?._count._all ?? 0])) as Record<CustomerStatus, number>
   const total = counts.reduce((sum, c) => sum + c._count._all, 0)
@@ -36,6 +39,7 @@ export default async function CmsLayout({ children }: { children: React.ReactNod
   const candidates: (CmsNavItem | false)[] = [
     can(r, 'customers') && { href: '/customers', label: 'Customers', icon: 'customers', count: total },
     can(r, 'accounts') && { href: '/accounts', label: 'Accounts', icon: 'accounts' },
+    can(r, 'serviceRequests') && { href: '/service-requests', label: 'Service Requests', icon: 'requests', count: openRequests },
     can(r, 'csSpecialists') && { href: '/specialists', label: 'CS Specialists', icon: 'specialists' },
     can(r, 'approvals', 'update') && { href: '/approvals', label: 'Approvals', icon: 'approvals', count: reviews, alert: true },
     can(r, 'contracts') && { href: '/contracts', label: 'Contracts', icon: 'contracts' },
@@ -73,7 +77,7 @@ export default async function CmsLayout({ children }: { children: React.ReactNod
             {switcher}
           </div>
           <Suspense>
-            <CmsNav items={items} byStatus={byStatus} />
+            <CmsNav items={items} byStatus={can(r, 'customers') ? byStatus : null} />
           </Suspense>
         </div>
 

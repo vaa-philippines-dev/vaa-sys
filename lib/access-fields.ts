@@ -36,12 +36,12 @@ export const ROLE_LABELS: Record<AccessRole, string> = {
 
 export const ROLE_DESCRIPTIONS: Record<AccessRole, string> = {
   ADMIN: 'Everything, including access and settings.',
-  CS_MANAGER: 'All customers and accounts, approvals, CS Specialists, contracts, the activity log and lead reports. Adds or removes Customer Specialists.',
-  CUSTOMER_SPECIALIST: 'Their own customers and accounts, plus customers they are covering.',
+  CS_MANAGER: 'All customers and accounts, approvals, CS Specialists, contracts, the activity log and lead reports. Adds or removes Customer Specialists. Runs any customer’s service requests and closes them as lost.',
+  CUSTOMER_SPECIALIST: 'Their own customers and accounts, plus customers they are covering. Opens their service requests, assigns the Service Department Manager, and holds the kick-off and VA connection calls.',
   LEAD_MANAGER: 'Lead Management, including contracts, initial bills and lead reports. Can view customers and the Accounting System.',
-  SERVICE_MANAGER: 'Views customers and accounts. Service requests and VA connections for their department arrive with later modules.',
-  HR_SPECIALIST: 'VA rates and HR work, arriving with later modules.',
-  HR_MANAGER: 'VA rates and HR work, arriving with later modules.',
+  SERVICE_MANAGER: 'Views customers and accounts. On the service requests assigned to them: assigns the main and buffer VAs, moves prepared VAs to Rate Agreement, and marks a VA started.',
+  HR_SPECIALIST: 'Confirms the Rate Agreement for each VA on service requests.',
+  HR_MANAGER: 'Confirms the Rate Agreement for each VA on service requests.',
   ACCOUNTING: 'The Accounting System: bills, payments, Foregone Revenue, rates and fees. Views customers, accounts and contracts.',
   RECRUITMENT_SPECIALIST: 'Recruitment stages of service requests, arriving with a later module.',
   TRAINING_MANAGER: 'Training stages of service requests, arriving with a later module.',
@@ -76,6 +76,8 @@ export function homeFor(role: AccessRole): string {
   if (role === 'LEAD_MANAGER') return '/leads'
   if (role === 'ACCOUNTING') return '/accounting'
   if (can(role, 'customers', 'read')) return '/customers'
+  // HR confirms Rate Agreements on Service Requests.
+  if (can(role, 'serviceRequests', 'read')) return '/service-requests'
   // Roles whose own pages arrive with later modules.
   return '/waiting'
 }

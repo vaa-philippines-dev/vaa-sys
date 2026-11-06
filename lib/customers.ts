@@ -12,6 +12,9 @@ const linkFields = { revokedAt: true, expiresAt: true, openedAt: true, submitted
 // (lib/test-leads.ts) are listed, with a Test badge, but never counted.
 export const REAL_CUSTOMERS = { isTest: false } satisfies Prisma.CustomerWhereInput
 
+// The most rows a customer or account list loads at once.
+export const LIST_LIMIT = 5000
+
 // scope: the person's customer scope from lib/scope.ts (null = everyone).
 export async function listCustomers(params: { q?: string; status?: string; specialist?: string; review?: boolean; scope?: Prisma.CustomerWhereInput | null }) {
   const q = params.q?.trim()
@@ -37,7 +40,9 @@ export async function listCustomers(params: { q?: string; status?: string; speci
     prisma.customer.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      take: 300,
+      // Every customer, so the table sorts the whole list (1,384 after the
+      // legacy import, Nov 5, 2026); the page says so if this is ever reached.
+      take: LIST_LIMIT,
       include: {
         onboardingLinks: { select: linkFields },
         _count: { select: { accounts: true } },

@@ -68,7 +68,7 @@ The Postgres database is shared with **va-management** (Workforce). This app own
 
 `legacy/vaa-cms-gas/` is the old Apps Script CMS, cloned with clasp, kept as read-only reference (it's excluded from lint). Don't edit it and don't `clasp push`. Start from `docs/legacy-cms.md`, which summarises its tables, roles and rules with file:line references, before reading the source.
 
-The rebuild goes module by module; module 1 (foundation, Customers & Accounts) is done. `lib/permissions.ts` already lists the later modules, and `MODULE 2:` comments mark the places waiting for them. When importing legacy data, take only records from 2026-08-01 onward (test data only, for now).
+The rebuild goes module by module; module 1 (foundation, Customers & Accounts) is done. `lib/permissions.ts` already lists the later modules, and `MODULE 2:` comments mark the places waiting for them. Customer Management loads and saves its own `vaa_sys` tables. The legacy customers and accounts (VA Workforce's copy in `public.customers` / `public.accounts`) are imported into them in full, all dates included, with `npm run db:import-legacy` (decided Nov 5, 2026). A developer runs it with `--apply`; you only run its dry run.
 
 ## Git workflow
 

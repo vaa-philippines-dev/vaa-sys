@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { Loader2, Plus, X } from 'lucide-react'
+import { Loader2, Pencil, Plus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -22,6 +22,7 @@ export function AccountEditForm({
   types,
   regions,
   contracts,
+  onDone,
 }: {
   accountId: string
   initial: { categoryId: string | null; typeId: string | null; countryRegionId: string | null; sellerOnboardingLink: string | null; contractLink: string | null; contractId: string | null; isReturning: boolean }
@@ -29,6 +30,8 @@ export function AccountEditForm({
   types: SettingOptionLite[]
   regions: SettingOptionLite[]
   contracts: Option[]
+  // Back to the read-only view, after a save or on Cancel.
+  onDone?: () => void
 }) {
   const router = useRouter()
   const [v, setV] = useState({
@@ -70,6 +73,7 @@ export function AccountEditForm({
           if (!result.ok) return setError(result.error)
           setError(null)
           toast.success('Saved.')
+          onDone?.()
           router.refresh()
         })
       }}
@@ -98,10 +102,36 @@ export function AccountEditForm({
           {error}
         </p>
       )}
-      <Button type="submit" variant="outline" disabled={pending} className="w-full">
-        {pending && <Loader2 className="animate-spin" />} Save account details
-      </Button>
+      <div className="flex gap-2">
+        <Button type="submit" variant="outline" disabled={pending}>
+          {pending && <Loader2 className="animate-spin" />} Save account details
+        </Button>
+        {onDone && (
+          <Button type="button" variant="ghost" onClick={onDone} disabled={pending}>
+            Cancel
+          </Button>
+        )}
+      </div>
     </form>
+  )
+}
+
+// The account page's Account details: read-only (view) until Edit is clicked
+// (asked for on Nov 5, 2026), then the form; saving or Cancel goes back.
+export function AccountDetailsCard({ canEdit, view, form }: { canEdit: boolean; view: ReactNode; form: Omit<Parameters<typeof AccountEditForm>[0], 'onDone'> }) {
+  const [editing, setEditing] = useState(false)
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="font-semibold">Account details</h2>
+        {canEdit && !editing && (
+          <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+            <Pencil /> Edit
+          </Button>
+        )}
+      </div>
+      <div className="rounded-xl border bg-card p-4">{editing ? <AccountEditForm {...form} onDone={() => setEditing(false)} /> : view}</div>
+    </section>
   )
 }
 

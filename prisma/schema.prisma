@@ -228,6 +228,7 @@ model Customer {
   notesLog        CustomerAccountNote[]
   invoices        Invoice[]
   payments        Payment[]
+  vaConnections   VaConnection[]
 
   @@index([name])
   @@index([status])
@@ -464,6 +465,7 @@ model Account {
   statusLogs AccountStatusLog[]
   notes      CustomerAccountNote[]
   invoices   Invoice[]
+  vaConnections VaConnection[]
 
   @@index([customerId])
   @@index([status])
@@ -658,11 +660,172 @@ model Ticket {
   createdAt      DateTime              @default(now()) @map("created_at")
   updatedAt      DateTime              @updatedAt @map("updated_at")
 
-  requests TicketRequest[]
+  // Service Requests (Customer Management, Nov 5, 2026; lib/service-requests.ts).
+  // The onboarding form's ticket is the account's New one.
+  type                   ServiceRequestType  @default(NEW)
+  // A cache of the phase its candidates add up to (the most advanced one).
+  phase                  ServiceRequestPhase @default(NEW)
+  phaseChangedAt         DateTime            @default(now()) @map("phase_changed_at")
+  // The Service Department Manager the customer's CS assigned it to, and
+  // their department (a public.departments id, read with raw SQL).
+  managerEmail           String?             @map("manager_email")
+  departmentId           String?             @map("department_id")
+  managerAssignedAt      DateTime?           @map("manager_assigned_at")
+  managerAssignedByEmail String?             @map("manager_assigned_by_email")
+  closedAt               DateTime?           @map("closed_at")
+  closedByEmail          String?             @map("closed_by_email")
+  closedReason           String?             @map("closed_reason")
+
+  requests    TicketRequest[]
+  candidates  ServiceRequestCandidate[]
+  connections VaConnection[]
 
   @@index([customerId])
   @@index([accountId])
+  @@index([phase])
+  @@index([managerEmail])
   @@map("tickets")
+  @@schema("vaa_sys")
+}
+
+enum ServiceRequestType {
+  NEW
+  ADDITIONAL
+  REPLACEMENT
+  RELIEVER
+
+  @@schema("vaa_sys")
+}
+
+enum ServiceRequestPhase {
+  NEW
+  VA_ASSIGNMENT
+  VA_PREPARATION
+  RATE_AGREEMENT
+  KICKOFF_CALL
+  CONNECTION_CALL
+  START_VA
+  CLOSED_WON
+  CLOSED_LOST
+
+  @@schema("vaa_sys")
+}
+
+// Where one VA candidate is. A ticket's phase is its most advanced active
+// candidate's stage (lib/service-request-fields.ts).
+enum CandidateStage {
+  VA_PREPARATION
+  RATE_AGREEMENT
+  KICKOFF_CALL
+  CONNECTION_CALL
+  START_VA
+  STARTED
+  DECLINED
+  WITHDRAWN
+
+  @@schema("vaa_sys")
+}
+
+enum CandidateRole {
+  MAIN
+  BUFFER
+
+  @@schema("vaa_sys")
+}
+
+// A VA the Service Department Manager put forward for one VA request
+// (sub-ticket): the main VA or a buffer. vaProfileId is VA Workforce's
+// public.va_profiles id (read with raw SQL); the name and email are kept as
+// they were when assigned.
+model ServiceRequestCandidate {
+  id                   String         @id @default(cuid())
+  ticketId             String         @map("ticket_id")
+  ticket               Ticket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  requestId            String         @map("request_id")
+  request              TicketRequest  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  vaProfileId          String         @map("va_profile_id")
+  vaName               String         @map("va_name")
+  vaEmail              String?        @map("va_email")
+  role                 CandidateRole  @default(MAIN)
+  stage                CandidateStage @default(VA_PREPARATION)
+  stageChangedAt       DateTime       @default(now()) @map("stage_changed_at")
+  assignedByEmail      String         @map("assigned_by_email")
+  assignedAt           DateTime       @default(now()) @map("assigned_at")
+  prepDoneAt           DateTime?      @map("prep_done_at")
+  prepDoneByEmail      String?        @map("prep_done_by_email")
+  rateConfirmedAt      DateTime?      @map("rate_confirmed_at")
+  rateConfirmedByEmail String?        @map("rate_confirmed_by_email")
+  kickoffAt            DateTime?      @map("kickoff_at")
+  kickoffByEmail       String?        @map("kickoff_by_email")
+  outcomeAt            DateTime?      @map("outcome_at")
+  outcomeByEmail       String?        @map("outcome_by_email")
+  declineReason        String?        @map("decline_reason")
+  startDate            DateTime?      @map("start_date") @db.Date
+  startedByEmail       String?        @map("started_by_email")
+  notes                String?
+  createdAt            DateTime       @default(now()) @map("created_at")
+  updatedAt            DateTime       @updatedAt @map("updated_at")
+
+  connection VaConnection?
+
+  @@unique([requestId, vaProfileId])
+  @@index([ticketId])
+  @@map("service_request_candidates")
+  @@schema("vaa_sys")
+}
+
+enum VaConnectionStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  STARTED
+  PAUSED
+  CANCELLED
+  TERMINATED
+  UNKNOWN
+
+  @@schema("vaa_sys")
+}
+
+// A VA working for an account (legacy VAConnections). Made when the Service
+// Department Manager marks a candidate Started; the legacy CMS's connections
+// are imported (scripts/import-legacy-customers.ts) with their VA's legacy
+// id and name, since those don't match VA Workforce's profiles.
+model VaConnection {
+  id              String                   @id @default(cuid())
+  connectionCode  String                   @unique @map("connection_code")
+  customerId      String                   @map("customer_id")
+  customer        Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  accountId       String                   @map("account_id")
+  account         Account                  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  ticketId        String?                  @map("ticket_id")
+  ticket          Ticket?                  @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  candidateId     String?                  @unique @map("candidate_id")
+  candidate       ServiceRequestCandidate? @relation(fields: [candidateId], references: [id], onDelete: SetNull)
+  vaProfileId     String?                  @map("va_profile_id")
+  vaExternalId    String?                  @map("va_external_id")
+  vaName          String                   @map("va_name")
+  status          VaConnectionStatus
+  statusChangedAt DateTime                 @default(now()) @map("status_changed_at")
+  connectionType  String?                  @map("connection_type")
+  service         String?
+  department      String?
+  hours           String?
+  hoursType       String?                  @map("hours_type")
+  connectionDate  DateTime?                @map("connection_date") @db.Date
+  startDate       DateTime?                @map("start_date") @db.Date
+  endDate         DateTime?                @map("end_date") @db.Date
+  notes           String?
+  // APP (made here) or LEGACY (imported from the legacy CMS).
+  source          String                   @default("APP")
+  createdByEmail  String                   @map("created_by_email")
+  createdAt       DateTime                 @default(now()) @map("created_at")
+  updatedAt       DateTime                 @updatedAt @map("updated_at")
+
+  @@index([customerId, status])
+  @@index([accountId, status])
+  @@index([status])
+  @@map("va_connections")
   @@schema("vaa_sys")
 }
 
@@ -698,6 +861,7 @@ model TicketRequest {
   updatedAt             DateTime     @updatedAt @map("updated_at")
 
   invoiceItems InvoiceItem[]
+  candidates   ServiceRequestCandidate[]
 
   @@unique([ticketId, lineNo])
   @@map("ticket_requests")

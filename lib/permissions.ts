@@ -72,6 +72,7 @@ export type Action = 'read' | 'create' | 'update' | 'delete'
 
 type Grant = Partial<Record<Action, true>>
 const R: Grant = { read: true }
+const RU: Grant = { read: true, update: true }
 const CRU: Grant = { read: true, create: true, update: true }
 const CRUD: Grant = { read: true, create: true, update: true, delete: true }
 
@@ -120,12 +121,15 @@ const GRID: Record<Module, Partial<Record<AccessRole, Grant>>> = {
   userAccess: {},
   workforceOrg: {},
 
+  // Service Requests (/service-requests, Nov 5, 2026). Who may take each
+  // step is checked in lib/service-requests.ts: the customer's CS, the
+  // ticket's Service Department Manager, HR for the Rate Agreement.
   serviceRequests: {
     CS_MANAGER: CRUD,
     CUSTOMER_SPECIALIST: CRU,
     SERVICE_MANAGER: CRUD,
-    HR_SPECIALIST: R,
-    HR_MANAGER: R,
+    HR_SPECIALIST: RU,
+    HR_MANAGER: RU,
     RECRUITMENT_SPECIALIST: R,
     TRAINING_MANAGER: R,
     ACCOUNTING: R,

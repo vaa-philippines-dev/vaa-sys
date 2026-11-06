@@ -52,11 +52,12 @@ The roles are the legacy CMS's. What each may do is one module × role map in `l
 | Admin | Area picker (`/`) | all, edit | apply directly | manage | ✓ | manage | manage | ✓ | ✓ | ✓ (every role) |
 | Customer Success Manager | `/customers` | all, edit | apply directly | manage | ✓ | manage | view | ✓ | | ✓ (Customer Specialists only) |
 | Customer Specialist | `/customers` | own + covering, edit | pause/terminate/cancel go to review | view | | view | | own customers' history | | |
-| Service Manager (with a department) | `/customers` | all, view | | | | | | | | |
+| Service Manager (with a department) | `/customers` | all, view; on Service Requests assigned to them: assign VAs, move them to Rate Agreement, mark a VA started | | | | | | | | |
 | Accounting | `/accounting` | all, view | | | | view | manage (payments, voids, rates and fees) | | | |
 | Executive, Executive Support | `/customers` | all, view | | | | view | view | ✓ | | |
 | Lead Manager | `/leads` | view customers | | | | add and edit | view (prepares initial bills on the lead's page) | | | |
-| HR Specialist, HR Manager, Recruitment Specialist, Training Manager | `/waiting` until their modules arrive | | | | | | | | | |
+| HR Specialist, HR Manager | `/service-requests` | confirm each VA's Rate Agreement on Service Requests | | | | | | | | |
+| Recruitment Specialist, Training Manager | `/waiting` until their modules arrive | | | | | | | | | |
 
 - **Admins** are Workforce `SUPER_ADMIN`/`SYSTEM_ADMIN` accounts with an `@vaaphilippines.com` email. They need no row on the Access page.
 - **Everyone else** gets a role on the **Access** page (`vaa_sys.access_users`), picked by name from Workforce's staff with a company mailbox (or by typing an email). A Service Manager also gets one of Workforce's service departments. Admins have the same page in Lead Management as **User access** (`/leads/access`); CS Managers manage only their Customer Specialists, on `/access`.
@@ -74,10 +75,11 @@ The roles are the legacy CMS's. What each may do is one module × role map in `l
 
 | Page | What it does |
 |---|---|
-| `/customers` | Portfolio card, then two tables: **Leads** (records still in Lead Management: Pending and not yet New Customer Onboarded, with their phase and days in it; the first 5, and **Show all** opens the rest with `?leads=all`) and **Customers** (status, CS Specialist, review and warning flags). The customers table shows **Active** customers by default; its status chips pick another status or **All statuses** (`?status=all`), and the status filter never hides the leads table. Recent activity alongside. Other filters: `?cs=none`, `?review=1` (both show every status). Admins also get **Template** and **Import** (see [Importing customers](#importing-customers)). |
+| `/customers` | Five figures (Active customers, Active accounts, Paused customers, Active VA connections, Active VAs connected: different VAs with a Started connection), then two tables: **Leads** (records still in Lead Management: Pending and not yet New Customer Onboarded, with their phase and days in it; the first 5, and **Show all** opens the rest with `?leads=all`) and **Customers** (status, CS Specialist, review and warning flags). The customers table shows **Active** customers by default; its status chips pick another status or **All statuses** (`?status=all`), and the status filter never hides the leads table. Recent activity alongside. Other filters: `?cs=none`, `?review=1` (both show every status). Admins also get **Template** and **Import** (see [Importing customers](#importing-customers)). |
 | `/customers/import` | Admins only. Download the Customers template, upload it filled in (or a CSV saved from it), check the preview, then import. |
-| `/customers/<id>` | Status ribbon, lead phase, CS Specialist, first payment, termination/reactivation counts, warnings, takeovers, accounts, customer notes, history, status form, details form, status log. In Customer Success Handoff, a **Mark onboarded** button for the CS Manager or the customer's CS Specialist. |
-| `/accounts`, `/accounts/<id>` | Account list by status; account profile with status, category/type/country (with local time), links, contract, account managers, notes (its own and its customer's), onboarding details and tickets, history. |
+| `/customers/<id>` | Status ribbon, lead phase, CS Specialist, first payment, termination/reactivation counts, warnings, takeovers, accounts, **Details** (each account's onboarding details and tickets; **Edit** opens the customer's own fields, each account's company, billing and contacts, and each VA request), customer notes, history. The status form and status log are on the account page. In Customer Success Handoff, a **Mark onboarded** button for the CS Manager or the customer's CS Specialist. |
+| `/accounts`, `/accounts/<id>` | Account list by status; account profile with status, **Account details** (category/type/country with local time, contract, links, Returning; read-only until **Edit**), contract, **Service requests** (with **New service request**), notes (its own and its customer's), **Details** (onboarding details and tickets, editable), history; status form, account managers and status log alongside. |
+| `/service-requests`, `/service-requests/<id>`, `/service-requests/new?account=` | **Service Requests:** every ticket by phase (Open by default, **Waiting on me**, search), and one ticket's page with its workflow, its VA requests and their candidates, and the next step for whoever acts (see [Service Requests](#service-requests)). |
 | `/specialists` | CS team portfolios, customers without a CS Specialist, transfer/assign, takeovers (cover customers for a date range). |
 | `/approvals` | Pending reviews: Confirm keeps the change, Cancel puts the previous status back (cascaded accounts included). |
 | `/contracts` | Contract templates (`CON-001`) with typed terms (Percentage, Amount, Text, Yes/No), a template link, and the accounts using each. The same database as Lead Management's `/leads/contracts`. |
@@ -206,6 +208,43 @@ Statuses follow the status form's rules:
 - **A changed status** on an existing customer goes through `lib/status.ts` like any other change, so its accounts follow and the status and activity logs are written the same way. A customer waiting for a CS Manager's review can't be changed until that's resolved. Reactivating leaves its terminated or cancelled accounts for the account pages.
 - **Leads stay in Lead Management:** a new row can't be Pending, and a lead's status isn't changed here (use [Importing leads](#importing-leads)).
 
+## Importing the legacy customers
+
+Customer Management loads and saves its own tables (`vaa_sys.customers`, `vaa_sys.accounts` and the rest). The legacy CMS's customers and accounts, which VA Workforce keeps a synced copy of in `public.customers` and `public.accounts`, are copied in once with `scripts/import-legacy-customers.ts` (Nov 5, 2026). That covers all 1,380 customers and 1,370 accounts, every status and date. `public.*` is only read.
+
+```bash
+npm run db:import-legacy
+npm run db:import-legacy -- --apply --by you@vaaphilippines.com
+```
+
+The first command is a dry run: what would be added, and any problems. The second imports, in one transaction. A developer runs it; it's re-runnable, and only adds records whose `CUST_` / `CLT_` ID isn't in vaa-sys yet, never changing or deleting anything already there.
+
+- **Customers** keep their Customer ID, name, status (since its date, with a status log row), CS Specialist, first payment, termination and reactivation counts, notes, and created date and creator. The legacy status history becomes a note.
+- **They're marked onboarded:** intake, contract sent and confirmed, and handoff are recorded on the legacy created date by "Legacy CMS". Without that, the Pending ones would show up as leads in Lead Management.
+- **Accounts** keep their Account ID, name, company, status, Returning, Category, Type, Country/region, seller onboarding link, contract, contacts (one focal contact each), account managers and notes. Country/region values missing from Settings are added there.
+- **Not in the legacy CMS:** payment method and invoice source. They're set to "Other: not recorded in the legacy CMS" and the primary contact.
+- **Skipped:** one legacy account whose customer cell is a spreadsheet error.
+- **VA connections** (once SQL 012 is applied; run the import again): the legacy connections from VA Workforce's `public.va_connection_records`, onto the accounts by `CLT_` ID, with their `CONN_` ID, status, VA (legacy ID and name, which don't match VA Workforce's profiles), service, department, hours and dates. Legacy rates and rate agreements aren't imported. Legacy tickets aren't either: they're imported separately.
+- **CS Specialists:** the legacy customers name 15 CS Specialists. Each needs a Customer Specialist row on the Access page to see their customers.
+
+## Service Requests
+
+A service request is a ticket on an account (`lib/service-request-fields.ts`, `lib/service-requests.ts`, Nov 5, 2026). The onboarding form's ticket is the account's **New** one; every account should have one. **Additional**, **Replacement** and **Reliever** tickets are opened from the account page. Each VA request (sub-ticket) needs one VA.
+
+| Phase | Who acts | What they do |
+|---|---|---|
+| New | the customer's CS (CS Specialist, someone covering, a CS Manager) | assigns a Service Department Manager (an active Service Manager on Access, with their department) |
+| VA Assignment | that Service Department Manager | puts forward a main VA and buffer VAs for each VA request, from VA Workforce's VAs (their department first) |
+| VA Preparation & Mock Interview | the manager | moves each prepared VA on to Rate Agreement (or withdraws one) |
+| Rate Agreement | an HR Specialist or HR Manager | confirms it, per VA |
+| CS Kick-off Call | the customer's CS | marks it done |
+| VA Connection Call | the customer's CS | records whether the client accepted the VA; a declined VA needs a reason and drops out |
+| Start VA | the manager | marks the accepted VA started with a start date. That makes the VA connection, makes the account (and customer) Active, and withdraws the request's other candidates |
+
+- **The ticket's phase** is its most advanced active candidate's: one VA in Rate Agreement and another in the Connection Call puts the ticket in the Connection Call. With no active candidate it's back in VA Assignment.
+- **Closed - Won** once every VA request has a started VA. A CS Manager can close a ticket as **Closed - Lost** with a reason.
+- **Admins** can take every step. Every step is in the ticket's history and the activity log.
+
 ## Confidential service rates
 
 Each Workforce service has a **Standard Billing Rate** (what the client pays per hour) and a **VA Base Rate**, both confidential (Nov 5, 2026; `lib/rates.ts`):
@@ -271,7 +310,9 @@ The app shares va-management's Supabase Postgres but only owns the **`vaa_sys`**
 | `account_status_logs` | every account status change |
 | `account_managers` | the account's managers, one row each (name, email) |
 | `contracts`, `contract_section_defs`, `contract_sections` | contract templates (with their template link), the typed terms a contract can have, and each contract's values. `accounts.contract_id` says which applies. |
-| `tickets` | main ticket per account request (`ticket_number` → TKT-000001) |
+| `tickets` | a service request (`ticket_number` → TKT-000001): type (New, Additional, Replacement, Reliever), phase, Service Department Manager and department, closed date and reason. The onboarding form's is the account's New one |
+| `service_request_candidates` | the main and buffer VAs (VA Workforce `va_profiles` ids) put forward for each VA request, with each step's date and who took it |
+| `va_connections` | VAs working for an account (`CONN_` IDs): status, VA, service, hours, dates. Made when a candidate is marked Started; the legacy CMS's imported |
 | `app_settings` | general settings admins edit, one row per key (e.g. the work hour minimums, the billing fees); no row means the built-in defaults |
 | `invoices` | a bill (`invoice_number` → INV-0001): customer, account, kind (initial), status, currency, VAT and PayPal switches, the fees it was made with, subtotal/VAT/PayPal fee/total, amount paid, notes, prepared/sent/voided (when, by whom, why) |
 | `invoice_items` | each VA request on a bill: service, department, schedule type, VAs, period, hourly rate, hours and ND hours per VA (and how they were first worked out), free hours with their promo, deposit discount with its CEO approval |
@@ -287,7 +328,7 @@ Accounts also hold status, Returning, category/type/country-region (from `settin
 
 The app reads va-management's data with raw SQL (`lib/workforce.ts`, `lib/auth.ts`):
 - `public.users` for sign-in and names
-- `public.customers` and `public.accounts` for legacy duplicate checks
+- `public.customers` and `public.accounts` for legacy duplicate checks, and as the source of the one-time legacy import (see [Importing the legacy customers](#importing-the-legacy-customers))
 - `public.departments` (active SERVICE-level departments) for Service Managers and the Department list
 - `public.skills` with `public.department_skills` for the Service list
 - `public.department_memberships` for the people counts on `/leads/departments`
@@ -316,6 +357,7 @@ npm run db:apply -- prisma/sql/<file>.sql
 - `009_test_leads.sql`: `customers.is_test`, for test leads (additive only)
 - `010_accounting_initial_billing.sql`: the Accounting System's bills, their items, department fees and lines, payments and default rates (additive only)
 - `011_services_confidential_rates.sql`: `service_profiles` and `rate_viewers`, with each onboarding form service linked to its Workforce service by name (additive only; reads `public.skills`)
+- `012_service_requests_va_connections.sql`: Service Requests on `tickets` (type, phase, manager, closing), `service_request_candidates` and `va_connections` (additive only)
 
 ## Setup
 
@@ -366,6 +408,7 @@ Set `NEXT_PUBLIC_SITE_URL` to the deployed address, because onboarding links are
 | `npm run build` | production build |
 | `npm run db:sql` | print SQL for the whole Prisma schema, as a starting point for a new `prisma/sql/` file |
 | `npm run db:apply -- <file>` | apply one reviewed SQL file to the shared database |
+| `npm run db:import-legacy` | dry run of the legacy customers import (counts and problems, saves nothing); add `-- --apply --by <your email>` to import |
 
 There is no automated test suite yet; check changes with `typecheck`, `lint` and by using the page.
 

@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { Hourglass, Search, X } from 'lucide-react'
 import { requireCan } from '@/lib/auth'
 import { listAccounts } from '@/lib/accounts'
+import { LIST_LIMIT } from '@/lib/customers'
 import { customerScopeWhere } from '@/lib/scope'
 import { ACCOUNT_STATUSES, STATUS_LABELS, type AccountStatus } from '@/lib/customer-fields'
 import { STATUS_META } from '@/components/cms/status-meta'
@@ -54,6 +55,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
         ))}
       </ul>
 
+      {rows.length >= LIST_LIMIT && <p className="text-[12px] text-warning">Showing the newest {LIST_LIMIT.toLocaleString()} accounts. Pick a status or search to narrow it down.</p>}
       {rows.length === 0 ? (
         <div className="rounded-2xl border border-dashed bg-card px-6 py-14 text-center text-sm text-muted-foreground">
           {q ? `Nothing matches “${q}”.` : 'No accounts yet. The first account is made when a customer submits the onboarding form.'}

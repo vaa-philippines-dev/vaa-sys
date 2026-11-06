@@ -15,6 +15,8 @@ import {
   type AccountStatusChangeInput,
   type ActionResult,
 } from '@/lib/customer-fields'
+import { accountDetailsSchema, vaRequestEditSchema, type AccountDetailsInput, type VaRequestEditInput } from '@/lib/account-details-fields'
+import { nightDifferentialHours, shiftHours, subTicketCode } from '@/lib/onboarding-fields'
 
 const NO_ACCESS = "You don't have permission to change this account."
 
@@ -75,6 +77,167 @@ export async function updateAccount(accountId: string, input: AccountEditInput):
     const base = { entityType: 'Account', entityId: accountId, entityLabel: `${name} (${accountCode})`, customerId }
     const changes = fieldChanges(base, old, data).map((c) => (c.field === 'contractId' ? { ...c, action: 'CONTRACT_ASSIGNED' } : c))
     await logActivity(tx, actor, changes)
+  })
+  await refresh(accountId)
+  return { ok: true, data: null }
+}
+
+// The Details section's edit (customer and account pages): the account's
+// onboarding details and its contacts. Never the status. One main contact at
+// most (account_contacts_one_focal_per_account), so focal flags are cleared
+// before the new one is set.
+export async function updateAccountDetails(accountId: string, input: AccountDetailsInput): Promise<ActionResult> {
+  const actor = await actorFor(accountId)
+  if (!actor) return { ok: false, error: NO_ACCESS }
+  const parsed = accountDetailsSchema.safeParse(input)
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Check the form.' }
+  const v = parsed.data
+
+  const before = await prisma.account.findUnique({
+    where: { id: accountId },
+    select: {
+      name: true,
+      accountCode: true,
+      customerId: true,
+      companyName: true,
+      dbaName: true,
+      businessAddress: true,
+      website: true,
+      timeZone: true,
+      platforms: true,
+      platformOther: true,
+      otherInfo: true,
+      invoiceContactSource: true,
+      invoiceContactName: true,
+      invoiceContactRole: true,
+      invoiceContactEmail: true,
+      paymentMethod: true,
+      paymentMethodOther: true,
+      billingCountry: true,
+      hasPayoneerOrWise: true,
+      contacts: true,
+    },
+  })
+  if (!before) return { ok: false, error: 'That account no longer exists.' }
+
+  const blank = (s: string) => (s === '' ? null : s)
+  const contactName = (c: { firstName: string; lastName: string } | null) => (c ? `${c.firstName} ${c.lastName}`.trim() : '')
+  // Invoices go to a contact's name and email, or the one typed in.
+  const invoice =
+    v.invoiceSource === 'PRIMARY'
+      ? { name: contactName(v.primary), role: v.primary?.role ?? '', email: v.primary?.email ?? '' }
+      : v.invoiceSource === 'SECONDARY'
+        ? { name: contactName(v.secondary), role: v.secondary?.role ?? '', email: v.secondary?.email ?? '' }
+        : { name: v.invoiceName, role: v.invoiceRole, email: v.invoiceEmail }
+  const data = {
+    companyName: v.companyName,
+    dbaName: blank(v.dbaName),
+    businessAddress: blank(v.businessAddress),
+    website: blank(v.website),
+    timeZone: blank(v.timeZone),
+    platforms: v.platforms,
+    platformOther: v.platforms.includes('Other') ? blank(v.platformOther) : null,
+    otherInfo: blank(v.otherInfo),
+    invoiceContactSource: v.invoiceSource,
+    invoiceContactName: blank(invoice.name),
+    invoiceContactRole: blank(invoice.role),
+    invoiceContactEmail: invoice.email.toLowerCase(),
+    paymentMethod: v.paymentMethod,
+    paymentMethodOther: v.paymentMethod === 'OTHER' ? blank(v.paymentMethodOther) : null,
+    billingCountry: blank(v.billingCountry),
+    hasPayoneerOrWise: v.hasPayoneerOrWise,
+  }
+  const { name, accountCode, customerId, contacts, ...old } = before
+  const contactText = (c: { firstName: string; lastName: string; role: string | null; email: string; whatsapp: string | null; region: string | null; isFocal: boolean } | undefined) =>
+    c ? [`${c.firstName} ${c.lastName}`.trim(), c.role, c.email, c.whatsapp, c.region, c.isFocal ? 'main contact' : null].filter(Boolean).join(' · ') : null
+
+  await prisma.$transaction(async (tx) => {
+    await tx.account.update({ where: { id: accountId }, data })
+    await tx.accountContact.updateMany({ where: { accountId }, data: { isFocal: false } })
+    const next: Record<'PRIMARY' | 'SECONDARY', ReturnType<typeof contactText>> = { PRIMARY: null, SECONDARY: null }
+    for (const kind of ['PRIMARY', 'SECONDARY'] as const) {
+      const c = kind === 'PRIMARY' ? v.primary : v.secondary
+      if (!c) {
+        await tx.accountContact.deleteMany({ where: { accountId, kind } })
+        continue
+      }
+      const row = { firstName: c.firstName, lastName: c.lastName, role: blank(c.role), email: c.email.toLowerCase(), whatsapp: blank(c.whatsapp), region: blank(c.region), isFocal: v.focal === kind }
+      await tx.accountContact.upsert({ where: { accountId_kind: { accountId, kind } }, create: { accountId, kind, ...row }, update: row })
+      next[kind] = contactText(row)
+    }
+    const base = { entityType: 'Account', entityId: accountId, entityLabel: `${name} (${accountCode})`, customerId }
+    const was = Object.fromEntries((['PRIMARY', 'SECONDARY'] as const).map((k) => [k === 'PRIMARY' ? 'primaryContact' : 'secondaryContact', contactText(contacts.find((c) => c.kind === k))]))
+    await logActivity(tx, actor, fieldChanges(base, { ...old, ...was }, { ...data, primaryContact: next.PRIMARY, secondaryContact: next.SECONDARY }))
+  })
+  await refresh(accountId)
+  return { ok: true, data: null }
+}
+
+// One VA request (sub-ticket) on one of the account's tickets. Its number and
+// line stay as they are. A fixed shift's hours and night differential are
+// worked out from its times, as the onboarding form does.
+export async function updateVaRequest(accountId: string, requestId: string, input: VaRequestEditInput): Promise<ActionResult> {
+  const actor = await actorFor(accountId)
+  if (!actor) return { ok: false, error: NO_ACCESS }
+  const parsed = vaRequestEditSchema.safeParse(input)
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Check the request.' }
+  const r = parsed.data
+
+  const before = await prisma.ticketRequest.findUnique({ where: { id: requestId }, include: { ticket: { select: { accountId: true, customerId: true, ticketNumber: true } } } })
+  if (!before || before.ticket.accountId !== accountId) return { ok: false, error: 'That request isn’t on this account.' }
+
+  const fixed = r.scheduleType === 'DAILY_FIXED'
+  const daily = fixed || r.scheduleType === 'DAILY_FLEXIBLE'
+  const [y, m, d] = r.targetStartDate.split('-').map(Number)
+  const data = {
+    service: r.service,
+    numberOfVas: r.numberOfVas,
+    scheduleType: r.scheduleType,
+    hoursPerDay: r.scheduleType === 'DAILY_FLEXIBLE' ? r.hoursPerDay : fixed ? shiftHours(r.startTimePht, r.endTimePht) : null,
+    hoursPerWeek: r.scheduleType === 'WEEKLY_FLEXIBLE' ? r.hoursPerWeek : null,
+    hoursPerMonth: r.scheduleType === 'MONTHLY' ? r.hoursPerMonth : null,
+    projectHours: r.scheduleType === 'PROJECT' ? r.projectHours : null,
+    startTimePht: fixed ? r.startTimePht : null,
+    endTimePht: fixed ? r.endTimePht : null,
+    workDays: daily ? r.workDays : [],
+    nightDifferential: fixed ? nightDifferentialHours(r.startTimePht, r.endTimePht) > 0 : r.nightDifferential,
+    additionalHours: r.additionalHours || null,
+    targetStartDate: new Date(Date.UTC(y, m - 1, d)),
+    tasks: r.tasks,
+    tools: r.tools || null,
+    taskTracker: r.taskTracker,
+  }
+  const n = (x: unknown) => (x == null ? null : Number(x))
+  const old = {
+    service: before.service,
+    numberOfVas: before.numberOfVas,
+    scheduleType: before.scheduleType,
+    hoursPerDay: n(before.hoursPerDay),
+    hoursPerWeek: n(before.hoursPerWeek),
+    hoursPerMonth: n(before.hoursPerMonth),
+    projectHours: n(before.projectHours),
+    startTimePht: before.startTimePht,
+    endTimePht: before.endTimePht,
+    workDays: before.workDays,
+    nightDifferential: before.nightDifferential,
+    additionalHours: before.additionalHours,
+    targetStartDate: before.targetStartDate.toISOString().slice(0, 10),
+    tasks: before.tasks,
+    tools: before.tools,
+    taskTracker: before.taskTracker,
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.ticketRequest.update({ where: { id: requestId }, data })
+    await logActivity(
+      tx,
+      actor,
+      fieldChanges(
+        { entityType: 'Ticket', entityId: before.ticketId, entityLabel: subTicketCode(before.ticket.ticketNumber, before.lineNo), customerId: before.ticket.customerId },
+        old,
+        { ...data, targetStartDate: r.targetStartDate }
+      )
+    )
   })
   await refresh(accountId)
   return { ok: true, data: null }

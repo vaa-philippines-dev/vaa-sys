@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
-import { Building2, CheckCheck, FileSignature, History, KeyRound, Settings2, UserCog, Users } from 'lucide-react'
+import { Building2, CheckCheck, ClipboardList, FileSignature, History, KeyRound, Settings2, UserCog, Users } from 'lucide-react'
 import { STATUS_META, STATUS_ORDER } from '@/components/cms/status-meta'
 import type { CustomerStatus } from '@/lib/customer-fields'
 import { cn } from '@/lib/utils'
@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 const ICONS = {
   customers: Users,
   accounts: Building2,
+  requests: ClipboardList,
   specialists: UserCog,
   approvals: CheckCheck,
   contracts: FileSignature,
@@ -23,7 +24,8 @@ export type CmsNavItem = { href: string; label: string; icon: keyof typeof ICONS
 // Customer Management's sidebar nav: the pages this person may open (worked
 // out on the server from lib/permissions.ts), then a view per customer
 // status with its live count.
-export function CmsNav({ items, byStatus }: { items: CmsNavItem[]; byStatus: Record<CustomerStatus, number> }) {
+// byStatus is null for roles that don't see customers (HR, for Service Requests).
+export function CmsNav({ items, byStatus }: { items: CmsNavItem[]; byStatus: Record<CustomerStatus, number> | null }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const onList = pathname === '/customers'
@@ -66,7 +68,7 @@ export function CmsNav({ items, byStatus }: { items: CmsNavItem[]; byStatus: Rec
         })}
       </nav>
 
-      <div className="flex flex-col gap-0.5">
+      {byStatus && <div className="flex flex-col gap-0.5">
         <p className="px-2.5 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">By status</p>
         {STATUS_ORDER.map((s) => (
           <Link
@@ -82,7 +84,7 @@ export function CmsNav({ items, byStatus }: { items: CmsNavItem[]; byStatus: Rec
             <span className="ml-auto text-xs tabular-nums text-muted-foreground">{byStatus[s]}</span>
           </Link>
         ))}
-      </div>
+      </div>}
     </div>
   )
 }
