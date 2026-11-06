@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { ArrowLeft, ExternalLink, Hourglass } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Hourglass, Plus } from 'lucide-react'
 import { prisma } from '@/lib/prisma'
 import { requireCan } from '@/lib/auth'
 import { accountNotes, getAccount } from '@/lib/accounts'
@@ -17,7 +17,11 @@ import { ReviewButtons } from '@/components/cms/ReviewButtons'
 import { StatusChanger } from '@/components/customers/StatusChanger'
 import { AccountsView } from '@/components/customers/AccountsView'
 import { NotesPanel } from '@/components/customers/CustomerPanels'
-import { AccountEditForm, AccountManagers } from '@/components/customers/AccountPanels'
+import { AccountDetailsCard, AccountManagers } from '@/components/customers/AccountPanels'
+import { DetailsEditor } from '@/components/customers/DetailsEditor'
+import { editableAccount } from '@/components/customers/details-data'
+import { PhasePill } from '@/components/requests/PhasePill'
+import { SR_TYPE_LABELS, srCode, type SrPhase, type SrType } from '@/lib/service-request-fields'
 import { cn } from '@/lib/utils'
 
 // One account's profile (legacy account view): status and its history,
@@ -130,6 +134,53 @@ export default async function AccountPage({ params }: { params: Promise<{ id: st
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="min-w-0 space-y-6">
+          {/* Above the contract, read-only until Edit (asked for on Nov 5, 2026). */}
+          <AccountDetailsCard
+            canEdit={canEdit}
+            view={
+              <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+                {(
+                  [
+                    ['Category', account.category?.label],
+                    ['Type', account.type?.label],
+                    ['Country / region', account.countryRegion?.label],
+                    ['Contract', account.contract ? `${account.contract.contractCode} · ${account.contract.name}` : null],
+                    [
+                      'Seller onboarding link',
+                      account.sellerOnboardingLink ? (
+                        <a href={account.sellerOnboardingLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 break-all text-primary hover:underline">
+                          {account.sellerOnboardingLink} <ExternalLink className="h-3 w-3 shrink-0" />
+                        </a>
+                      ) : null,
+                    ],
+                    [
+                      'Signed contract link',
+                      account.contractLink ? (
+                        <a href={account.contractLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 break-all text-primary hover:underline">
+                          {account.contractLink} <ExternalLink className="h-3 w-3 shrink-0" />
+                        </a>
+                      ) : null,
+                    ],
+                    ['Returning account', account.isReturning ? 'Yes (came back after being terminated)' : 'No'],
+                  ] as [string, React.ReactNode][]
+                ).map(([label, value]) => (
+                  <div key={label}>
+                    <dt className="text-xs text-muted-foreground">{label}</dt>
+                    <dd className="mt-0.5 min-w-0">{value ?? <span className="text-muted-foreground">Not set</span>}</dd>
+                  </div>
+                ))}
+              </dl>
+            }
+            form={{
+              accountId: account.id,
+              initial: account,
+              categories,
+              types,
+              regions,
+              contracts: contracts.map((c) => ({ id: c.id, label: `${c.contractCode} · ${c.name}`, isActive: c.isActive })),
+            }}
+          />
+
           <section className="space-y-3">
             <h2 className="font-semibold">Contract</h2>
             {account.contract ? (
@@ -160,6 +211,35 @@ export default async function AccountPage({ params }: { params: Promise<{ id: st
             )}
           </section>
 
+          {/* Service Requests (Nov 5, 2026): every account has a New one, then Additional, Replacement or Reliever. */}
+          <section className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="font-semibold">Service requests</h2>
+              {can(user.role, 'serviceRequests', 'create') && (
+                <Link href={`/service-requests/new?account=${account.id}`} className="inline-flex h-8 items-center gap-1.5 rounded-lg border bg-card px-2.5 text-sm font-medium hover:bg-muted">
+                  <Plus className="h-4 w-4" /> New service request
+                </Link>
+              )}
+            </div>
+            {account.tickets.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No service requests on this account yet. It should have a New one.</p>
+            ) : (
+              <ul className="divide-y rounded-xl border bg-card">
+                {account.tickets.map((t) => (
+                  <li key={t.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
+                    <Link href={`/service-requests/${t.id}`} className="font-mono font-medium hover:underline">
+                      {srCode(t.ticketNumber)}
+                    </Link>
+                    <span className="text-muted-foreground">
+                      {SR_TYPE_LABELS[t.type as SrType]} · {t.requests.length} VA{t.requests.length === 1 ? '' : 's'} · opened {t.createdAt.toLocaleDateString('en-PH', manilaDate)}
+                    </span>
+                    <PhasePill phase={t.phase as SrPhase} className="ml-auto" />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
           <section className="space-y-3">
             <h2 className="font-semibold">Notes</h2>
             <p className="text-xs text-muted-foreground">This account’s notes and its customer’s.</p>
@@ -171,10 +251,9 @@ export default async function AccountPage({ params }: { params: Promise<{ id: st
             />
           </section>
 
-          <section className="space-y-3">
-            <h2 className="font-semibold">Onboarding details and tickets</h2>
+          <DetailsEditor canEdit={canEdit} accounts={[editableAccount(account)]}>
             <AccountsView accounts={[account]} canSetGroup={can(user.role, 'leads', 'update')} />
-          </section>
+          </DetailsEditor>
 
           <section className="space-y-3">
             <h2 className="font-semibold">History</h2>
@@ -191,20 +270,6 @@ export default async function AccountPage({ params }: { params: Promise<{ id: st
               ) : (
                 <StatusChanger kind="account" id={account.id} current={account.status} terminationReasons={terminationReasons} reviewed={needsStatusReview(user.role)} />
               )}
-            </section>
-          )}
-
-          {canEdit && (
-            <section className="space-y-3 rounded-xl border bg-card p-4">
-              <h2 className="font-semibold">Account details</h2>
-              <AccountEditForm
-                accountId={account.id}
-                initial={account}
-                categories={categories}
-                types={types}
-                regions={regions}
-                contracts={contracts.map((c) => ({ id: c.id, label: `${c.contractCode} · ${c.name}`, isActive: c.isActive }))}
-              />
             </section>
           )}
 

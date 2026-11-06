@@ -2,9 +2,14 @@ import Link from 'next/link'
 import { Hourglass, Search, X } from 'lucide-react'
 import { requireCan } from '@/lib/auth'
 import { listAccounts } from '@/lib/accounts'
+import { LIST_LIMIT, REAL_CUSTOMERS } from '@/lib/customers'
 import { customerScopeWhere } from '@/lib/scope'
+import { prisma } from '@/lib/prisma'
+import { vaConnectionFigures } from '@/lib/service-requests'
+import { PortfolioCard } from '@/components/cms/PortfolioCard'
 import { ACCOUNT_STATUSES, STATUS_LABELS, type AccountStatus } from '@/lib/customer-fields'
 import { STATUS_META } from '@/components/cms/status-meta'
+import { SortableTable } from '@/components/ui/sortable-table'
 import { cn } from '@/lib/utils'
 
 // Every account the person can see (legacy Accounts list), filterable by
@@ -13,7 +18,18 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
   const user = await requireCan('accounts', 'read', '/accounts')
   const { q, status } = await searchParams
   const active = ACCOUNT_STATUSES.includes(status as AccountStatus) ? (status as AccountStatus) : null
-  const { rows, byStatus } = await listAccounts({ q, status: active ?? undefined, scope: await customerScopeWhere(user) })
+  const scope = await customerScopeWhere(user)
+  // The same figures as the Customers page, with paused accounts instead of
+  // paused customers (Nov 6, 2026). They count everything in scope, test
+  // records left out, whatever the list below shows.
+  const real = { customer: { AND: [scope ?? {}, REAL_CUSTOMERS] } }
+  const [{ rows, byStatus }, activeCustomers, activeAccounts, pausedAccounts, va] = await Promise.all([
+    listAccounts({ q, status: active ?? undefined, scope }),
+    prisma.customer.count({ where: { AND: [scope ?? {}, REAL_CUSTOMERS, { status: 'ACTIVE' }] } }),
+    prisma.account.count({ where: { ...real, status: 'ACTIVE' } }),
+    prisma.account.count({ where: { ...real, status: 'PAUSED' } }),
+    vaConnectionFigures(scope),
+  ])
 
   return (
     <main className="flex w-full flex-1 flex-col gap-5 px-4 py-6 sm:px-6">
@@ -39,6 +55,8 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
         </form>
       </div>
 
+      <PortfolioCard activeCustomers={activeCustomers} activeAccounts={activeAccounts} paused={{ kind: 'accounts', count: pausedAccounts }} activeConnections={va.connections} vasConnected={va.vas} />
+
       <ul className="flex flex-wrap gap-2">
         {ACCOUNT_STATUSES.map((s) => (
           <li key={s}>
@@ -53,24 +71,34 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
         ))}
       </ul>
 
+      {rows.length >= LIST_LIMIT && <p className="text-[12px] text-warning">Showing the newest {LIST_LIMIT.toLocaleString()} accounts. Pick a status or search to narrow it down.</p>}
       {rows.length === 0 ? (
         <div className="rounded-2xl border border-dashed bg-card px-6 py-14 text-center text-sm text-muted-foreground">
           {q ? `Nothing matches “${q}”.` : 'No accounts yet. The first account is made when a customer submits the onboarding form.'}
         </div>
       ) : (
         <div className="overflow-x-auto rounded-2xl border bg-card">
-          <table className="w-full text-sm">
-            <thead className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-              <tr className="border-b">
-                <th className="py-3 pl-6 pr-3 font-medium">Account</th>
-                <th className="px-3 py-3 font-medium">Customer</th>
-                <th className="px-3 py-3 font-medium">Status</th>
-                <th className="hidden px-3 py-3 font-medium md:table-cell">Category · Type</th>
-                <th className="hidden py-3 pl-3 pr-6 font-medium lg:table-cell">Country / region</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((a) => (
+          <SortableTable
+            className="w-full text-sm"
+            theadClassName="text-left text-[11px] uppercase tracking-wide text-muted-foreground"
+            headRowClassName="border-b"
+            columns={[
+              { key: 'name', label: 'Account', className: 'py-3 pl-6 pr-3 font-medium' },
+              { key: 'customer', label: 'Customer', className: 'px-3 py-3 font-medium' },
+              { key: 'status', label: 'Status', className: 'px-3 py-3 font-medium' },
+              { key: 'category', label: 'Category · Type', className: 'hidden px-3 py-3 font-medium md:table-cell' },
+              { key: 'country', label: 'Country / region', className: 'hidden py-3 pl-3 pr-6 font-medium lg:table-cell' },
+            ]}
+            rows={rows.map((a) => ({
+              id: a.id,
+              values: {
+                name: a.name,
+                customer: a.customer.name,
+                status: ACCOUNT_STATUSES.indexOf(a.status),
+                category: [a.category?.label, a.type?.label].filter(Boolean).join(' · '),
+                country: a.countryRegion?.label,
+              },
+              node: (
                 <tr key={a.id} className="group border-b last:border-b-0 hover:bg-muted/50">
                   <td className={cn('relative py-3 pl-6 pr-3 before:absolute before:inset-y-2.5 before:left-2.5 before:w-1 before:rounded-full', STATUS_META[a.status].stripe)}>
                     <Link href={`/accounts/${a.id}`} className="font-medium group-hover:underline">
@@ -96,9 +124,9 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
                   <td className="hidden px-3 py-3 text-muted-foreground md:table-cell">{[a.category?.label, a.type?.label].filter(Boolean).join(' · ') || '–'}</td>
                   <td className="hidden py-3 pl-3 pr-6 text-muted-foreground lg:table-cell">{a.countryRegion?.label ?? '–'}</td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              ),
+            }))}
+          />
         </div>
       )}
     </main>

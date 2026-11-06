@@ -1,10 +1,16 @@
 import { prisma } from '@/lib/prisma'
-import { ADMIN_EMAIL_DOMAIN, type Actor } from '@/lib/auth'
+import { ADMIN_EMAIL_DOMAIN, rateViewerEmail, type Actor } from '@/lib/auth'
+import { ViewAsButton } from '@/components/layout/ViewAsControls'
 import { grantableRoles, ROLE_DESCRIPTIONS, ROLE_LABELS, ACCESS_ROLES } from '@/lib/access-fields'
 import { listServiceDepartments, listStaff } from '@/lib/workforce'
 import { manilaDate } from '@/lib/customer-fields'
 import { cn } from '@/lib/utils'
 import { AddAccessForm, AccessRowControls } from '@/components/access/AccessControls'
+import { SortableTable } from '@/components/ui/sortable-table'
+import { RateViewers } from '@/components/access/RateViewers'
+import { canViewRates, listRateViewers, ratesKeySet } from '@/lib/rates'
+import { accessPeopleWhoLeft, staffReason } from '@/lib/access-staff'
+import { TriangleAlert } from 'lucide-react'
 
 type StaffName = { email: string; name: string }
 
@@ -12,10 +18,24 @@ type StaffName = { email: string; name: string }
 // Customer Management's /access and Lead Management's /leads/access. Names
 // come from VAA Workforce; Workforce Super and System Admins are admins
 // here without a row.
-export async function AccessPanel({ user, area, title, titleClass }: { user: Actor; area: string; title: string; titleClass?: string }) {
+export async function AccessPanel({
+  user,
+  area,
+  title,
+  titleClass,
+  rateViewers = false,
+}: {
+  user: Actor
+  area: string
+  title: string
+  titleClass?: string
+  // Lead Management's User access also lists who can see the confidential rates.
+  rateViewers?: boolean
+}) {
   const grantable = grantableRoles(user.role)
+  const viewAs = user.role === 'ADMIN' && !user.viewingAs
 
-  const [rows, admins, departments, staff] = await Promise.all([
+  const [rows, admins, departments, staff, viewers, canManageRates, left] = await Promise.all([
     prisma.accessUser.findMany({ orderBy: [{ isActive: 'desc' }, { role: 'asc' }, { email: 'asc' }] }),
     prisma.$queryRaw<StaffName[]>`
       SELECT email, trim(first_name || ' ' || last_name) AS name
@@ -26,10 +46,15 @@ export async function AccessPanel({ user, area, title, titleClass }: { user: Act
       ORDER BY first_name`,
     listServiceDepartments(),
     listStaff(ADMIN_EMAIL_DOMAIN),
+    rateViewers ? listRateViewers() : Promise.resolve([]),
+    rateViewers ? canViewRates(rateViewerEmail(user)) : Promise.resolve(false),
+    accessPeopleWhoLeft(),
   ])
+  const leftById = new Map(left.map((l) => [l.id, l]))
+  const endedText = (d: Date | null) => (d ? ` on ${d.toLocaleDateString('en-PH', { ...manilaDate, timeZone: 'UTC' })}` : '')
   const departmentName = new Map(departments.map((d) => [d.id, d.name]))
   const nameOf = new Map(staff.map((s) => [s.email, s.name]))
-  const missing = rows.map((r) => r.email).filter((e) => !nameOf.has(e))
+  const missing = [...rows.map((r) => r.email), ...viewers.map((v) => v.email)].filter((e) => !nameOf.has(e))
   if (missing.length) {
     const more = await prisma.$queryRaw<StaffName[]>`
       SELECT lower(email) AS email, trim(first_name || ' ' || last_name) AS name
@@ -39,10 +64,14 @@ export async function AccessPanel({ user, area, title, titleClass }: { user: Act
   // The picker says who already has access, so nobody is added twice.
   const adminEmails = new Set(admins.map((a) => a.email.toLowerCase()))
   const roleOf = new Map(rows.filter((r) => r.isActive).map((r) => [r.email, ROLE_LABELS[r.role]]))
+  // Names come from VAA Workforce's Staff list. Those who have left are
+  // listed apart and can't be picked.
   const people = staff.map((s) => ({
     email: s.email,
     name: s.name || s.email,
     current: adminEmails.has(s.email) ? ROLE_LABELS.ADMIN : (roleOf.get(s.email) ?? null),
+    detail: s.active ? [s.position, s.department].filter(Boolean).join(', ') || null : `${staffReason(s)}${endedText(s.endedOn)}`,
+    left: !s.active,
   }))
 
   return (
@@ -67,6 +96,24 @@ export async function AccessPanel({ user, area, title, titleClass }: { user: Act
         </dl>
       </details>
 
+      {left.length > 0 && (
+        <section role="status" className="space-y-2 rounded-2xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
+          <p className="flex items-center gap-2 font-medium">
+            <TriangleAlert className="h-4 w-4 text-warning" />
+            {left.length === 1 ? '1 person with access has' : `${left.length} people with access have`} left VAA in VAA Workforce
+          </p>
+          <ul className="space-y-0.5 text-muted-foreground">
+            {left.map((l) => (
+              <li key={l.id}>
+                <span className="font-medium text-foreground">{l.name}</span> ({ROLE_LABELS[l.role]}): {l.reason}
+                {endedText(l.endedOn)}
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-muted-foreground">They can still sign in until their access is removed below.</p>
+        </section>
+      )}
+
       <section className="space-y-3">
         <h2 className="font-semibold">Add someone</h2>
         <AddAccessForm roles={grantable} departments={departments} people={people} />
@@ -75,17 +122,21 @@ export async function AccessPanel({ user, area, title, titleClass }: { user: Act
       <section className="space-y-3">
         <h2 className="font-semibold">People with access</h2>
         <div className="overflow-x-auto rounded-2xl border bg-card">
-          <table className="w-full text-sm">
-            <thead className="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
-              <tr>
-                <th className="px-4 py-2.5 font-medium">Person</th>
-                <th className="px-4 py-2.5 font-medium">Role</th>
-                <th className="hidden px-4 py-2.5 font-medium md:table-cell">Added</th>
-                <th className="px-4 py-2.5" />
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {admins.map((a) => (
+          <SortableTable
+            className="w-full text-sm"
+            theadClassName="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground"
+            tbodyClassName="divide-y"
+            columns={[
+              { key: 'person', label: 'Person', className: 'px-4 py-2.5 font-medium' },
+              { key: 'role', label: 'Role', className: 'px-4 py-2.5 font-medium' },
+              { key: 'added', label: 'Added', firstDir: 'desc', className: 'hidden px-4 py-2.5 font-medium md:table-cell' },
+              { key: 'actions', label: <span className="sr-only">Change</span>, sortable: false, className: 'px-4 py-2.5' },
+            ]}
+            rows={[
+              ...admins.map((a) => ({
+                id: `admin-${a.email}`,
+                values: { person: a.name || a.email, role: ROLE_LABELS.ADMIN, added: null },
+                node: (
                 <tr key={`admin-${a.email}`} className="text-muted-foreground">
                   <td className="px-4 py-3">
                     <p className="font-medium text-foreground">{a.name}</p>
@@ -95,12 +146,22 @@ export async function AccessPanel({ user, area, title, titleClass }: { user: Act
                   <td className="hidden px-4 py-3 text-xs md:table-cell">From VAA Workforce (Super/System Admin)</td>
                   <td className="px-4 py-3" />
                 </tr>
-              ))}
-              {rows.map((r) => (
+                ),
+              })),
+              ...rows.map((r) => ({
+                id: r.id,
+                values: { person: nameOf.get(r.email) ?? r.email, role: ROLE_LABELS[r.role], added: r.createdAt },
+                node: (
                 <tr key={r.id} className={r.isActive ? '' : 'opacity-60'}>
                   <td className="px-4 py-3">
                     <p className="font-medium">{nameOf.get(r.email) ?? r.email}</p>
                     <p className="text-xs text-muted-foreground">{r.email}</p>
+                    {r.isActive && leftById.has(r.id) && (
+                      <span className="mt-1 inline-block rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning">
+                        Inactive in Workforce: {leftById.get(r.id)!.reason}
+                        {endedText(leftById.get(r.id)!.endedOn)}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     {ROLE_LABELS[r.role]}
@@ -110,25 +171,46 @@ export async function AccessPanel({ user, area, title, titleClass }: { user: Act
                   <td className="hidden px-4 py-3 text-xs text-muted-foreground md:table-cell">
                     {r.createdAt.toLocaleDateString('en-PH', manilaDate)} by {r.addedByEmail}
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    {grantable.includes(r.role) && (
-                      <AccessRowControls
-                        id={r.id}
-                        role={r.role}
-                        departmentId={r.departmentId}
-                        isActive={r.isActive}
-                        roles={grantable}
-                        departments={departments}
-                        isSelf={r.email === user.email.toLowerCase()}
-                      />
-                    )}
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      {/* An admin can see the app as this person sees it (read-only). */}
+                      {viewAs && r.isActive && r.role !== 'ADMIN' && <ViewAsButton email={r.email} name={nameOf.get(r.email) ?? r.email} />}
+                      {grantable.includes(r.role) && (
+                        <AccessRowControls
+                          id={r.id}
+                          role={r.role}
+                          departmentId={r.departmentId}
+                          isActive={r.isActive}
+                          roles={grantable}
+                          departments={departments}
+                          isSelf={r.email === user.email.toLowerCase()}
+                        />
+                      )}
+                    </div>
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+                ),
+              })),
+            ]}
+          />
         </div>
       </section>
+
+      {rateViewers && (
+        <RateViewers
+          viewers={viewers.map((v) => ({
+            email: v.email,
+            name: nameOf.get(v.email) || v.email,
+            owner: v.owner,
+            valid: v.valid,
+            grantedBy: v.grantedByEmail,
+            grantedOn: v.grantedAt ? v.grantedAt.toLocaleDateString('en-PH', manilaDate) : null,
+          }))}
+          people={staff.filter((s) => s.active).map((s) => ({ email: s.email, name: s.name || s.email }))}
+          canManage={canManageRates}
+          keySet={ratesKeySet()}
+        />
+      )}
     </main>
   )
 }

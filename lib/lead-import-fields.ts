@@ -24,13 +24,15 @@ export const IMPORT_MAX_BYTES = 900 * 1024
 
 export type ImportAction = 'create' | 'update' | 'skip' | 'error'
 
-// One row of the upload, as the preview shows it.
+// One row of the upload, as the preview shows it. The Customers import
+// (lib/customer-import-fields.ts) uses the same shape.
 export type ImportRowResult = {
   row: number
   action: ImportAction
   name: string
   customerCode: string | null
-  phase: string | null
+  // What the row sets: the phase for a lead, the status for a customer.
+  detail: string | null
   messages: string[]
 }
 

@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { REAL_CUSTOMERS } from '@/lib/customers'
+import { LIST_LIMIT, REAL_CUSTOMERS } from '@/lib/customers'
 import type { Prisma } from '@/src/generated/prisma/client'
 import { ACCOUNT_STATUSES, type AccountStatus } from '@/lib/customer-fields'
 
@@ -27,7 +27,9 @@ export async function listAccounts(params: { q?: string; status?: string; scope:
     prisma.account.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      take: 300,
+      // Every account, so the table sorts the whole list (1,374 after the
+      // legacy import, Nov 5, 2026); the page says so if this is ever reached.
+      take: LIST_LIMIT,
       select: {
         id: true,
         accountCode: true,

@@ -1,16 +1,16 @@
 'use client'
 
-import { useEffect, useMemo, useState, useTransition } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore, useTransition } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { Download, FlaskConical, Loader2, Plus, Search, Upload, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Download, FlaskConical, Layers, Loader2, Plus, Search, Upload, X } from 'lucide-react'
 import { createTestLead } from '@/app/(lms)/leads/actions'
 import { NewLeadForm } from '@/components/leads/NewLeadForm'
 import { TestBadge } from '@/components/leads/TestBadge'
-import { COLUMN_META, type BoardColumn } from '@/components/lms/stage-meta'
-import { PHASE_LABELS } from '@/lib/lead-phase-fields'
+import { BOARD_COLUMNS, COLUMN_META, type BoardColumn } from '@/components/lms/stage-meta'
+import { LEAD_PHASES, PHASE_LABELS, type LeadPhase } from '@/lib/lead-phase-fields'
 import { cn } from '@/lib/utils'
 
 export type TableLead = {
@@ -22,15 +22,83 @@ export type TableLead = {
   special: boolean
   day: number
   addedOn: string
+  // For sorting by when it was added (addedOn is display text).
+  addedAt: string
   addedBy: string
   test: boolean
 }
 
-// The Leads list as a table: one row per lead, newest first, with its phase
-// (Customer Intake's step, or the phase after the form), request type and
-// age. `stage` in the URL (the sidebar's views) filters it to one column of
-// the old board. Admins also get the import template and upload, and can
-// add a test lead (listed with a Test badge, never counted).
+type SortKey = 'name' | 'code' | 'phase' | 'request' | 'day' | 'added'
+type Sort = { key: SortKey; dir: 'asc' | 'desc' }
+const DEFAULT_SORT: Sort = { key: 'added', dir: 'desc' }
+const VIEW_KEY = 'leads-table-view'
+
+// Each column's sort value. Phase sorts in workflow order (Customer Intake's
+// steps first), not alphabetically.
+const sortValue: Record<SortKey, (l: TableLead) => string | number> = {
+  name: (l) => l.name.toLowerCase(),
+  code: (l) => l.code,
+  phase: (l) => BOARD_COLUMNS.indexOf(l.column),
+  request: (l) => (l.special ? 1 : 0),
+  day: (l) => l.day,
+  added: (l) => l.addedAt,
+}
+
+// The sort and grouping, remembered in this browser. Storage can be blocked
+// (private windows), so the latest choice is also kept in memory for the
+// visit; the server render always uses the defaults.
+type View = { sort: Sort; grouped: boolean }
+let memoryView: string | null = null
+const viewListeners = new Set<() => void>()
+function readView(): string | null {
+  if (memoryView !== null) return memoryView
+  try {
+    return localStorage.getItem(VIEW_KEY)
+  } catch {
+    return null
+  }
+}
+function writeView(v: View) {
+  memoryView = JSON.stringify(v)
+  try {
+    localStorage.setItem(VIEW_KEY, memoryView)
+  } catch {}
+  viewListeners.forEach((l) => l())
+}
+function subscribeView(listener: () => void) {
+  viewListeners.add(listener)
+  return () => void viewListeners.delete(listener)
+}
+function parseView(raw: string | null): View {
+  try {
+    const v = JSON.parse(raw ?? 'null') as Partial<View> | null
+    const sortOk = !!v?.sort && v.sort.key in sortValue && (v.sort.dir === 'asc' || v.sort.dir === 'desc')
+    return { sort: sortOk ? v!.sort! : DEFAULT_SORT, grouped: v?.grouped === true }
+  } catch {
+    return { sort: DEFAULT_SORT, grouped: false }
+  }
+}
+
+function sortLeads(rows: TableLead[], s: Sort): TableLead[] {
+  const get = sortValue[s.key]
+  const sign = s.dir === 'asc' ? 1 : -1
+  // Ties fall back to newest first, so the order never jumps around.
+  return [...rows].sort((a, b) => {
+    const x = get(a)
+    const y = get(b)
+    if (x < y) return -sign
+    if (x > y) return sign
+    return a.addedAt < b.addedAt ? 1 : a.addedAt > b.addedAt ? -1 : 0
+  })
+}
+
+// The Leads list as a table: one row per lead, newest first unless sorted by
+// another column (every header sorts), with its phase (Customer Intake's
+// step, or the phase after the form), request type and age. "Group by phase"
+// splits it into one section per workflow phase; the sort and grouping are
+// remembered in this browser. `stage` in the URL filters it to one column of
+// the old board. Admins also get the import template and upload, and can add
+// a test lead (listed with a Test badge, never counted).
 export function LeadsTable({
   leads,
   column: stage,
@@ -68,10 +136,79 @@ export function LeadsTable({
     return () => document.removeEventListener('keydown', onKey)
   }, [drawerOpen])
 
+  const rawView = useSyncExternalStore(subscribeView, readView, () => null)
+  const view = useMemo(() => parseView(rawView), [rawView])
+  const { sort, grouped } = view
+  const sortBy = (key: SortKey) => {
+    // A new column starts with the order that reads naturally for it.
+    const next: Sort = sort.key === key ? { key, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'added' || key === 'day' ? 'desc' : 'asc' }
+    writeView({ sort: next, grouped })
+  }
+  const toggleGrouped = () => writeView({ sort, grouped: !grouped })
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return q ? leads.filter((l) => `${l.name} ${l.code} ${l.email ?? ''}`.toLowerCase().includes(q)) : leads
-  }, [leads, query])
+    return sortLeads(q ? leads.filter((l) => `${l.name} ${l.code} ${l.email ?? ''}`.toLowerCase().includes(q)) : leads, view.sort)
+  }, [leads, query, view])
+
+  // One section per workflow phase that has leads, in workflow order.
+  const groups = useMemo(
+    () =>
+      LEAD_PHASES.map((phase) => ({ phase, rows: filtered.filter((l) => COLUMN_META[l.column].phase === phase) })).filter(
+        (g): g is { phase: LeadPhase; rows: TableLead[] } => g.rows.length > 0
+      ),
+    [filtered]
+  )
+
+  const header = (key: SortKey, label: string, align: 'left' | 'right' = 'left') => {
+    const active = sort.key === key
+    const Icon = !active ? ArrowUpDown : sort.dir === 'asc' ? ArrowUp : ArrowDown
+    return (
+      <th className={cn('px-4 py-2.5 font-medium', align === 'right' && 'text-right')} aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+        <button
+          type="button"
+          onClick={() => sortBy(key)}
+          className={cn('inline-flex items-center gap-1 rounded hover:text-foreground', active && 'text-foreground', align === 'right' && 'flex-row-reverse')}
+        >
+          {label}
+          <Icon className={cn('h-3 w-3', !active && 'opacity-40')} aria-hidden />
+        </button>
+      </th>
+    )
+  }
+
+  const row = (l: TableLead) => {
+    const meta = COLUMN_META[l.column]
+    const intake = meta.phase === 'CUSTOMER_INTAKE'
+    return (
+      <tr key={l.id} className="border-b last:border-0 hover:bg-muted/50">
+        <td className="px-4 py-2.5">
+          <Link href={`/leads/${l.id}`} className="font-medium hover:underline">
+            {l.name}
+          </Link>
+          {l.test && <TestBadge className="ml-2" />}
+          <p className="truncate text-[12px] text-muted-foreground">{l.email || 'No email yet'}</p>
+        </td>
+        <td className="px-4 py-2.5 font-mono text-[12px] text-muted-foreground">{l.code}</td>
+        <td className="px-4 py-2.5">
+          <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium', meta.soft)}>
+            <span className={cn('h-1.5 w-1.5 rounded-full', meta.dot)} aria-hidden />
+            {intake ? `${PHASE_LABELS.CUSTOMER_INTAKE} · ${meta.label}` : meta.label}
+          </span>
+        </td>
+        <td className="px-4 py-2.5">
+          {l.special ? <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[12px] font-medium text-warning">Special</span> : <span className="text-muted-foreground">Regular</span>}
+        </td>
+        <td className="px-4 py-2.5 text-right tabular-nums">{l.day}</td>
+        <td className="px-4 py-2.5 text-[12px] text-muted-foreground">
+          {l.addedOn}
+          <span className="block truncate" title={l.addedBy}>
+            {l.addedBy}
+          </span>
+        </td>
+      </tr>
+    )
+  }
 
   const real = leads.filter((l) => !l.test)
   const submitted = real.filter((l) => COLUMN_META[l.column].phase !== 'CUSTOMER_INTAKE').length
@@ -112,6 +249,15 @@ export function LeadsTable({
               className="w-40 bg-transparent text-[13px] outline-none sm:w-56"
             />
           </label>
+          <button
+            type="button"
+            onClick={toggleGrouped}
+            aria-pressed={grouped}
+            className={cn('flex h-9 items-center gap-1.5 rounded-xl border px-3 text-sm font-medium', grouped ? 'border-primary bg-primary/10' : 'bg-card hover:bg-muted')}
+            title="Show the leads in one section per workflow phase"
+          >
+            <Layers className="h-4 w-4" /> Group by phase
+          </button>
           {canImport && (
             <>
               <a
@@ -157,47 +303,32 @@ export function LeadsTable({
           <table className="w-full min-w-[760px] text-left text-[13px]">
             <thead className="text-[12px] text-muted-foreground">
               <tr className="border-b">
-                <th className="px-4 py-2.5 font-medium">Lead</th>
-                <th className="px-4 py-2.5 font-medium">Customer ID</th>
-                <th className="px-4 py-2.5 font-medium">Phase</th>
-                <th className="px-4 py-2.5 font-medium">Request</th>
-                <th className="px-4 py-2.5 text-right font-medium">Day</th>
-                <th className="px-4 py-2.5 font-medium">Added</th>
+                {header('name', 'Lead')}
+                {header('code', 'Customer ID')}
+                {header('phase', 'Phase')}
+                {header('request', 'Request')}
+                {header('day', 'Day', 'right')}
+                {header('added', 'Added')}
               </tr>
             </thead>
-            <tbody>
-              {filtered.map((l) => {
-                const meta = COLUMN_META[l.column]
-                const intake = meta.phase === 'CUSTOMER_INTAKE'
-                return (
-                  <tr key={l.id} className="border-b last:border-0 hover:bg-muted/50">
-                    <td className="px-4 py-2.5">
-                      <Link href={`/leads/${l.id}`} className="font-medium hover:underline">
-                        {l.name}
-                      </Link>
-                      {l.test && <TestBadge className="ml-2" />}
-                      <p className="truncate text-[12px] text-muted-foreground">{l.email || 'No email yet'}</p>
-                    </td>
-                    <td className="px-4 py-2.5 font-mono text-[12px] text-muted-foreground">{l.code}</td>
-                    <td className="px-4 py-2.5">
-                      <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium', meta.soft)}>
-                        <span className={cn('h-1.5 w-1.5 rounded-full', meta.dot)} aria-hidden />
-                        {intake ? `${PHASE_LABELS.CUSTOMER_INTAKE} · ${meta.label}` : meta.label}
+            {grouped ? (
+              groups.map((g) => (
+                <tbody key={g.phase}>
+                  <tr className="border-b bg-muted/40">
+                    <th colSpan={6} scope="rowgroup" className="px-4 py-2 text-[12px] font-semibold">
+                      {PHASE_LABELS[g.phase]}
+                      <span className="ml-2 font-normal text-muted-foreground">
+                        {g.rows.length} {g.rows.length === 1 ? 'lead' : 'leads'}
                       </span>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      {l.special ? <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[12px] font-medium text-warning">Special</span> : <span className="text-muted-foreground">Regular</span>}
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">{l.day}</td>
-                    <td className="px-4 py-2.5 text-[12px] text-muted-foreground">
-                      {l.addedOn}
-                      <span className="block truncate" title={l.addedBy}>
-                        {l.addedBy}
-                      </span>
-                    </td>
+                    </th>
                   </tr>
-                )
-              })}
+                  {g.rows.map(row)}
+                </tbody>
+              ))
+            ) : (
+              <tbody>{filtered.map(row)}</tbody>
+            )}
+            <tbody>
               {filtered.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-4 py-6 text-center text-muted-foreground">

@@ -10,6 +10,8 @@ import {
   PAYMENT_LABELS,
   REQUEST_GROUP_LABELS,
   SCHEDULE_LABELS,
+  dayHoursFromJson,
+  dayHoursText,
   part3Totals,
   phtToZoneTime,
   time12,
@@ -46,10 +48,13 @@ function schedule(r: Request, timeZone: string | null) {
   if (r.scheduleType === 'WEEKLY_FLEXIBLE') return `${hours(r.hoursPerWeek)} h a week, any time`
   if (r.scheduleType === 'MONTHLY') return `${hours(r.hoursPerMonth)} h a month, any time`
   if (r.scheduleType === 'PROJECT') return `${hours(r.projectHours)} h in total`
-  const days = r.workDays.join(', ')
+  // Hours for each day when the request has them (Nov 6, 2026), else its work days.
+  const perDay = dayHoursFromJson(r.dayHours)
+  const days = perDay ? dayHoursText(perDay) : r.workDays.join(', ')
   if (r.scheduleType === 'DAILY_FLEXIBLE') return `${hours(r.hoursPerDay)} h a day, any time · ${days}`
   const pht = `${time12(r.startTimePht ?? '')}–${time12(r.endTimePht ?? '')} PH time (${hours(r.hoursPerDay)} h)`
-  // The customer entered it in their own zone; show that too.
+  // The customer entered it in their own zone (this request's, or the account's); show that too.
+  timeZone = r.timeZone ?? timeZone
   const start = r.targetStartDate.toISOString().slice(0, 10)
   const local =
     timeZone && timeZone !== 'Asia/Manila'
@@ -276,7 +281,9 @@ function AccountRequests({ account: a, canSetGroup, sayWhenEmpty = false }: { ac
                     ['Target start', r.targetStartDate.toLocaleDateString('en-PH', { ...manilaDate, timeZone: 'UTC' })],
                     ['Tasks', r.tasks ? <span key="t" className="whitespace-pre-wrap">{r.tasks}</span> : null],
                     ['Tools', r.tools],
-                    ['Task tracker', r.taskTracker == null ? null : r.taskTracker ? 'Yes' : 'No'],
+                    ['Must-haves or deal breakers', r.mustHaves ? <span key="m" className="whitespace-pre-wrap">{r.mustHaves}</span> : null],
+                    ['Client time zone', r.timeZone ? r.timeZone.replace(/_/g, ' ') : null],
+                    ['Time tracker', r.taskTracker == null ? null : r.taskTracker ? 'Yes' : 'No'],
                     ['Group set by', r.requestGroupSetBy],
                   ]}
                 />

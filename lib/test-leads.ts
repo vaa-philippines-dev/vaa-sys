@@ -11,8 +11,7 @@ import type { OnboardingInput } from '@/lib/onboarding-fields'
 // link, and a sample onboarding form submitted through the same code as the
 // public form (app/onboarding/[token]/actions.ts), so it lands in Contract &
 // Billing Initiation exactly like a real lead. Test leads are left out of
-// reports and counts (REAL_CUSTOMERS in lib/customers.ts), and only they can
-// be deleted.
+// reports and counts (REAL_CUSTOMERS in lib/customers.ts).
 
 const pad = (n: number) => String(n).padStart(3, '0')
 
@@ -60,10 +59,13 @@ export function sampleOnboarding(n: number, today = manilaToday()): OnboardingIn
           startTimePht: '08:00',
           endTimePht: '17:00',
           workDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+          dayHours: [9, 9, 9, 9, 9, null, null],
           additionalHours: '',
-          taskTracker: null,
+          taskTracker: true,
           tasks: 'Sample tasks for testing: listings, inventory checks, customer messages.',
           tools: 'Seller Central',
+          timeZone: '',
+          mustHaves: 'Sample must-have: has Seller Central experience.',
         },
       ],
     },
@@ -105,16 +107,5 @@ export async function addTestLead(actor: Actor): Promise<{ id: string; n: number
   return { id, n, token }
 }
 
-// Removes a test lead and everything hanging off it (links, the form, its
-// account, contacts, tickets, status and phase logs all cascade). The
-// activity log keeps its rows, plus one saying who deleted it.
-export async function deleteTestLead(actor: Actor, customerId: string): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
-  const lead = await prisma.customer.findUnique({ where: { id: customerId }, select: { name: true, customerCode: true, isTest: true } })
-  if (!lead) return { ok: false, error: 'That lead no longer exists.' }
-  if (!lead.isTest) return { ok: false, error: 'Only test leads can be deleted.' }
-  await prisma.$transaction(async (tx) => {
-    await tx.customer.delete({ where: { id: customerId } })
-    await logActivity(tx, actor, { entityType: 'Customer', entityId: customerId, entityLabel: `${lead.name} (${lead.customerCode})`, customerId, action: 'DELETE', notes: 'Test lead deleted' })
-  })
-  return { ok: true, name: lead.name }
-}
+// Deleting one is the same as any lead (lib/lead-delete.ts), without the
+// typed-name confirmation.

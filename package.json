@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "db:sql": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script",
     "db:apply": "tsx --env-file=.env.local scripts/apply-sql.ts",
+    "db:import-legacy": "tsx --env-file=.env.local --tsconfig tsconfig.json scripts/import-legacy-customers.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

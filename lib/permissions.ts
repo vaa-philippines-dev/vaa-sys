@@ -34,13 +34,34 @@ export const MODULES = [
   // The Leads Excel template and upload (/leads/import): adds and updates
   // leads at any phase. Admins only.
   'leadImport',
-  // Test leads (lib/test-leads.ts): add a lead with a sample onboarding form,
-  // and delete test leads. Admins only.
+  // The Customers Excel template and upload (/customers/import): adds and
+  // updates customers, statuses included. Admins only.
+  'customerImport',
+  // Test leads (lib/test-leads.ts): add a lead with a sample onboarding form.
+  // Admins only. Deleting any lead is leads → delete (also admins only).
   'testLeads',
   // Lead Management's User access page (/leads/access), the same list as
   // Customer Management's Access page. Admins only; CS Managers keep their
   // own team on /access.
   'userAccess',
+  // Lead Management's Departments & services page (/leads/departments):
+  // VAA Workforce's service departments and services, edited in place
+  // (lib/workforce-org.ts). Admins only, since every Workforce page uses them.
+  // The services' confidential rates aren't a role grant: they're per person
+  // (lib/rates.ts), and those people can open the page for them.
+  'workforceOrg',
+  // The Service Requests Excel template and upload (/service-requests/import):
+  // adds tickets for existing accounts at any phase. Admins only.
+  'serviceRequestImport',
+  // Schedule changes on VA requests (lib/request-schedule.ts): read is the
+  // list and the notices; update is Executive Support's check of a change
+  // made while the service request was open, which affects billing.
+  'scheduleReviews',
+  // Rate Agreements (/rate-agreements, Nov 6, 2026; lib/rate-agreements.ts):
+  // read is the HR team's table and each agreement's summary; update is an
+  // HR Specialist working the ones assigned to them; create is an HR Manager
+  // assigning them. The customer's CS also confirms the schedule step.
+  'rateAgreements',
   // Later modules. Defaults follow the legacy grid; each module confirms
   // them when it is built.
   'serviceRequests',
@@ -51,6 +72,9 @@ export const MODULES = [
   'meetings',
   'followUps',
   'playbook',
+  // The Accounting System (/accounting): bills, payments, Foregone Revenue,
+  // and the rates and fees a bill starts from (update). The Lead Manager
+  // prepares a lead's initial bill as a leads update instead.
   'billing',
   'reports',
 ] as const
@@ -60,6 +84,7 @@ export type Action = 'read' | 'create' | 'update' | 'delete'
 
 type Grant = Partial<Record<Action, true>>
 const R: Grant = { read: true }
+const RU: Grant = { read: true, update: true }
 const CRU: Grant = { read: true, create: true, update: true }
 const CRUD: Grant = { read: true, create: true, update: true, delete: true }
 
@@ -97,20 +122,49 @@ const GRID: Record<Module, Partial<Record<AccessRole, Grant>>> = {
   activityLogs: { CS_MANAGER: R, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
   // CS Managers only grant the Customer Specialist role (grantableRoles).
   access: { CS_MANAGER: CRU },
+  // No delete for anyone but admins: deleting a lead removes it for good.
   leads: { LEAD_MANAGER: CRU },
   // The Lead Manager, plus the managers who follow the pipeline. Read only:
   // the reports never change anything.
   leadReports: { LEAD_MANAGER: R, CS_MANAGER: R, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
   leadImport: {},
+  customerImport: {},
   testLeads: {},
   userAccess: {},
+  workforceOrg: {},
+  serviceRequestImport: {},
+  // Executive Support checks schedule changes (Nov 6, 2026); Lead Management
+  // and the people running the request follow them.
+  scheduleReviews: {
+    EXECUTIVE_SUPPORT: RU,
+    EXECUTIVE: R,
+    LEAD_MANAGER: R,
+    CS_MANAGER: R,
+    CUSTOMER_SPECIALIST: R,
+    SERVICE_MANAGER: R,
+    ACCOUNTING: R,
+  },
 
+  rateAgreements: {
+    HR_MANAGER: CRU,
+    HR_SPECIALIST: RU,
+    CS_MANAGER: R,
+    CUSTOMER_SPECIALIST: R,
+    SERVICE_MANAGER: R,
+    ACCOUNTING: R,
+    EXECUTIVE: R,
+    EXECUTIVE_SUPPORT: R,
+  },
+
+  // Service Requests (/service-requests, Nov 5, 2026). Who may take each
+  // step is checked in lib/service-requests.ts: the customer's CS, a Service
+  // Manager of the VA request's department, HR for the Rate Agreement.
   serviceRequests: {
     CS_MANAGER: CRUD,
     CUSTOMER_SPECIALIST: CRU,
     SERVICE_MANAGER: CRUD,
-    HR_SPECIALIST: R,
-    HR_MANAGER: R,
+    HR_SPECIALIST: RU,
+    HR_MANAGER: RU,
     RECRUITMENT_SPECIALIST: R,
     TRAINING_MANAGER: R,
     ACCOUNTING: R,
@@ -157,7 +211,8 @@ const GRID: Record<Module, Partial<Record<AccessRole, Grant>>> = {
   meetings: { CS_MANAGER: CRUD, CUSTOMER_SPECIALIST: CRU, SERVICE_MANAGER: CRUD, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
   followUps: { CS_MANAGER: CRUD, CUSTOMER_SPECIALIST: CRUD },
   playbook: { CS_MANAGER: CRUD, CUSTOMER_SPECIALIST: CRU, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
-  billing: { ACCOUNTING: CRUD, CS_MANAGER: R, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
+  // The Lead Manager reads it to follow a lead's bill after sending it.
+  billing: { ACCOUNTING: CRUD, CS_MANAGER: R, LEAD_MANAGER: R, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
   reports: { CS_MANAGER: R, SERVICE_MANAGER: R, HR_MANAGER: R, EXECUTIVE: R, EXECUTIVE_SUPPORT: R },
 }
 

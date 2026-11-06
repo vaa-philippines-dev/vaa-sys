@@ -3,9 +3,8 @@ import { CustomerDetail } from '@/components/customers/CustomerDetail'
 import { requireArea, displayName } from '@/lib/auth'
 import { getCustomer } from '@/lib/customers'
 import { prisma } from '@/lib/prisma'
-import { can, needsStatusReview } from '@/lib/permissions'
+import { can } from '@/lib/permissions'
 import { assertCustomerInScope } from '@/lib/scope'
-import { settingOptions } from '@/lib/settings'
 import { listCsTeam, takeoverState } from '@/lib/specialists'
 import { staffNames } from '@/lib/workforce'
 import { startedVaCountsByCustomer } from '@/lib/va-connection-hooks'
@@ -20,9 +19,8 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
   if (!customer) notFound()
 
   const canAssign = can(user.role, 'csSpecialists', 'update')
-  const [team, terminationReasons, activity, vaCounts, names] = await Promise.all([
+  const [team, activity, vaCounts, names] = await Promise.all([
     canAssign ? listCsTeam() : Promise.resolve([]),
-    settingOptions('TerminationReason'),
     prisma.activityLog.findMany({ where: { customerId: id }, orderBy: { createdAt: 'desc' }, take: 50 }),
     startedVaCountsByCustomer(prisma, [id]),
     staffNames([customer.assignedSpecialistEmail ?? '', customer.reviewRequestedByEmail ?? '', ...customer.takeovers.map((t) => t.specialistEmail)]),
@@ -41,11 +39,9 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
           canHandoff: can(user.role, 'customers', 'update'),
           canAssign,
           canReview: can(user.role, 'approvals', 'update'),
-          reviewed: needsStatusReview(user.role),
           team: team.map((m) => ({ email: m.email, name: m.name })),
           specialistName: nameOf(customer.assignedSpecialistEmail),
           reviewByName: nameOf(customer.reviewRequestedByEmail),
-          terminationReasons,
           warnings: customerWarnings(customer, vaCounts ? (vaCounts.get(id) ?? 0) : null),
           activity,
           takeovers: customer.takeovers

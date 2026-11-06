@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { ACTION_LABELS } from '@/lib/activity-fields'
 import { manilaDateTime } from '@/lib/customer-fields'
 import type { ActivityLog } from '@/src/generated/prisma/client'
+import { SortableTable } from '@/components/ui/sortable-table'
 
 // Activity log rows as a table: the Activity log page, and the history on a
 // customer's or account's page.
@@ -9,20 +10,31 @@ type Row = ActivityLog
 
 export function ActivityTable({ rows }: { rows: Row[] }) {
   if (rows.length === 0) return <p className="rounded-2xl border border-dashed bg-card px-6 py-10 text-center text-sm text-muted-foreground">Nothing in this range.</p>
+  // Sorting reorders the rows on this page only (the log pages through 100
+  // at a time, newest first).
   return (
     <div className="overflow-x-auto rounded-2xl border bg-card">
-      <table className="w-full text-sm">
-        <thead className="border-b text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-          <tr>
-            <th className="px-4 py-2.5 font-medium">When</th>
-            <th className="px-4 py-2.5 font-medium">Record</th>
-            <th className="px-4 py-2.5 font-medium">What</th>
-            <th className="px-4 py-2.5 font-medium">Change</th>
-            <th className="px-4 py-2.5 font-medium">By</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y">
-          {rows.map((r) => (
+      <SortableTable
+        className="w-full text-sm"
+        theadClassName="border-b text-left text-[11px] uppercase tracking-wide text-muted-foreground"
+        tbodyClassName="divide-y"
+        columns={[
+          { key: 'when', label: 'When', firstDir: 'desc', className: 'px-4 py-2.5 font-medium' },
+          { key: 'record', label: 'Record', className: 'px-4 py-2.5 font-medium' },
+          { key: 'what', label: 'What', className: 'px-4 py-2.5 font-medium' },
+          { key: 'change', label: 'Change', className: 'px-4 py-2.5 font-medium' },
+          { key: 'by', label: 'By', className: 'px-4 py-2.5 font-medium' },
+        ]}
+        rows={rows.map((r) => ({
+          id: r.id,
+          values: {
+            when: r.createdAt,
+            record: `${r.entityType} ${r.entityLabel ?? r.entityId}`,
+            what: ACTION_LABELS[r.action] ?? r.action,
+            change: r.newValue ?? r.oldValue ?? r.notes,
+            by: r.actorName ?? r.actorEmail,
+          },
+          node: (
             <tr key={r.id} className="align-top">
               <td className="whitespace-nowrap px-4 py-2.5 text-xs text-muted-foreground">
                 {r.createdAt.toLocaleString('en-PH', manilaDateTime)}
@@ -53,9 +65,9 @@ export function ActivityTable({ rows }: { rows: Row[] }) {
                 {r.actorName && <span className="block text-muted-foreground">{r.actorEmail}</span>}
               </td>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          ),
+        }))}
+      />
     </div>
   )
 }

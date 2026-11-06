@@ -226,6 +226,9 @@ model Customer {
   tickets         Ticket[]
   takeovers       CustomerTakeover[]
   notesLog        CustomerAccountNote[]
+  invoices        Invoice[]
+  payments        Payment[]
+  vaConnections   VaConnection[]
 
   @@index([name])
   @@index([status])
@@ -461,6 +464,8 @@ model Account {
   managers   AccountManager[]
   statusLogs AccountStatusLog[]
   notes      CustomerAccountNote[]
+  invoices   Invoice[]
+  vaConnections VaConnection[]
 
   @@index([customerId])
   @@index([status])
@@ -554,6 +559,7 @@ model Contract {
   // when that table exists.
   sentToCustomers Customer[] @relation("ContractSent")
   leads           Customer[] @relation("LeadContract")
+  services        ServiceProfile[]
 
   @@map("contracts")
   @@schema("vaa_sys")
@@ -654,11 +660,184 @@ model Ticket {
   createdAt      DateTime              @default(now()) @map("created_at")
   updatedAt      DateTime              @updatedAt @map("updated_at")
 
-  requests TicketRequest[]
+  // Service Requests (Customer Management, Nov 5, 2026; lib/service-requests.ts).
+  // The onboarding form's ticket is the account's New one.
+  type                   ServiceRequestType  @default(NEW)
+  // A cache of the phase its candidates add up to (the most advanced one).
+  // New tickets start in VA Assignment (Nov 6, 2026); NEW is older data.
+  phase                  ServiceRequestPhase @default(VA_ASSIGNMENT)
+  phaseChangedAt         DateTime            @default(now()) @map("phase_changed_at")
+  // The Service Department Manager the customer's CS assigned it to, and
+  // their department (a public.departments id, read with raw SQL). Older
+  // tickets only: since Nov 6, 2026 each VA request has its own department
+  // (ticket_requests.department_id) and any of its managers acts.
+  managerEmail           String?             @map("manager_email")
+  departmentId           String?             @map("department_id")
+  managerAssignedAt      DateTime?           @map("manager_assigned_at")
+  managerAssignedByEmail String?             @map("manager_assigned_by_email")
+  closedAt               DateTime?           @map("closed_at")
+  closedByEmail          String?             @map("closed_by_email")
+  closedReason           String?             @map("closed_reason")
+  // The customer's focal person for this request (Nov 6, 2026), when it
+  // isn't the account's focal contact. Set by the ticket import.
+  focalName              String?             @map("focal_name")
+  focalEmail             String?             @map("focal_email")
+  focalPhone             String?             @map("focal_phone")
+  focalRole              String?             @map("focal_role")
+
+  requests        TicketRequest[]
+  candidates      ServiceRequestCandidate[]
+  connections     VaConnection[]
+  scheduleChanges ScheduleChange[]
+  rateAgreements  RateAgreement[]
 
   @@index([customerId])
   @@index([accountId])
+  @@index([phase])
+  @@index([managerEmail])
   @@map("tickets")
+  @@schema("vaa_sys")
+}
+
+enum ServiceRequestType {
+  NEW
+  ADDITIONAL
+  REPLACEMENT
+  RELIEVER
+
+  @@schema("vaa_sys")
+}
+
+enum ServiceRequestPhase {
+  NEW
+  VA_ASSIGNMENT
+  VA_PREPARATION
+  RATE_AGREEMENT
+  KICKOFF_CALL
+  CONNECTION_CALL
+  START_VA
+  CLOSED_WON
+  CLOSED_LOST
+
+  @@schema("vaa_sys")
+}
+
+// Where one VA candidate is. A ticket's phase is its most advanced active
+// candidate's stage (lib/service-request-fields.ts).
+enum CandidateStage {
+  VA_PREPARATION
+  RATE_AGREEMENT
+  KICKOFF_CALL
+  CONNECTION_CALL
+  START_VA
+  STARTED
+  DECLINED
+  WITHDRAWN
+
+  @@schema("vaa_sys")
+}
+
+enum CandidateRole {
+  MAIN
+  BUFFER
+
+  @@schema("vaa_sys")
+}
+
+// A VA the Service Department Manager put forward for one VA request
+// (sub-ticket): the main VA or a buffer. vaProfileId is VA Workforce's
+// public.va_profiles id (read with raw SQL); the name and email are kept as
+// they were when assigned.
+model ServiceRequestCandidate {
+  id                   String         @id @default(cuid())
+  ticketId             String         @map("ticket_id")
+  ticket               Ticket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  requestId            String         @map("request_id")
+  request              TicketRequest  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  vaProfileId          String         @map("va_profile_id")
+  vaName               String         @map("va_name")
+  vaEmail              String?        @map("va_email")
+  role                 CandidateRole  @default(MAIN)
+  stage                CandidateStage @default(VA_PREPARATION)
+  stageChangedAt       DateTime       @default(now()) @map("stage_changed_at")
+  assignedByEmail      String         @map("assigned_by_email")
+  assignedAt           DateTime       @default(now()) @map("assigned_at")
+  prepDoneAt           DateTime?      @map("prep_done_at")
+  prepDoneByEmail      String?        @map("prep_done_by_email")
+  rateConfirmedAt      DateTime?      @map("rate_confirmed_at")
+  rateConfirmedByEmail String?        @map("rate_confirmed_by_email")
+  kickoffAt            DateTime?      @map("kickoff_at")
+  kickoffByEmail       String?        @map("kickoff_by_email")
+  outcomeAt            DateTime?      @map("outcome_at")
+  outcomeByEmail       String?        @map("outcome_by_email")
+  declineReason        String?        @map("decline_reason")
+  startDate            DateTime?      @map("start_date") @db.Date
+  startedByEmail       String?        @map("started_by_email")
+  notes                String?
+  createdAt            DateTime       @default(now()) @map("created_at")
+  updatedAt            DateTime       @updatedAt @map("updated_at")
+
+  connection    VaConnection?
+  rateAgreement RateAgreement?
+
+  @@unique([requestId, vaProfileId])
+  @@index([ticketId])
+  @@map("service_request_candidates")
+  @@schema("vaa_sys")
+}
+
+enum VaConnectionStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  STARTED
+  PAUSED
+  CANCELLED
+  TERMINATED
+  UNKNOWN
+
+  @@schema("vaa_sys")
+}
+
+// A VA working for an account (legacy VAConnections). Made when the Service
+// Department Manager marks a candidate Started; the legacy CMS's connections
+// are imported (scripts/import-legacy-customers.ts) with their VA's legacy
+// id and name, since those don't match VA Workforce's profiles.
+model VaConnection {
+  id              String                   @id @default(cuid())
+  connectionCode  String                   @unique @map("connection_code")
+  customerId      String                   @map("customer_id")
+  customer        Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  accountId       String                   @map("account_id")
+  account         Account                  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  ticketId        String?                  @map("ticket_id")
+  ticket          Ticket?                  @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  candidateId     String?                  @unique @map("candidate_id")
+  candidate       ServiceRequestCandidate? @relation(fields: [candidateId], references: [id], onDelete: SetNull)
+  vaProfileId     String?                  @map("va_profile_id")
+  vaExternalId    String?                  @map("va_external_id")
+  vaName          String                   @map("va_name")
+  status          VaConnectionStatus
+  statusChangedAt DateTime                 @default(now()) @map("status_changed_at")
+  connectionType  String?                  @map("connection_type")
+  service         String?
+  department      String?
+  hours           String?
+  hoursType       String?                  @map("hours_type")
+  connectionDate  DateTime?                @map("connection_date") @db.Date
+  startDate       DateTime?                @map("start_date") @db.Date
+  endDate         DateTime?                @map("end_date") @db.Date
+  notes           String?
+  // APP (made here) or LEGACY (imported from the legacy CMS).
+  source          String                   @default("APP")
+  createdByEmail  String                   @map("created_by_email")
+  createdAt       DateTime                 @default(now()) @map("created_at")
+  updatedAt       DateTime                 @updatedAt @map("updated_at")
+
+  @@index([customerId, status])
+  @@index([accountId, status])
+  @@index([status])
+  @@map("va_connections")
   @@schema("vaa_sys")
 }
 
@@ -690,11 +869,387 @@ model TicketRequest {
   tools                 String?
   requestGroup          RequestGroup @default(REGULAR) @map("request_group")
   requestGroupSetBy     String?      @map("request_group_set_by")
+  // Daily schedules (Nov 6, 2026): hours for each day, {"Mon": 8, ..., "Sun": 0}.
+  // workDays are the days above 0. Null on older requests: hoursPerDay on workDays.
+  dayHours              Json?        @map("day_hours")
+  // The client's time zone for this request; null = the account's.
+  timeZone              String?      @map("time_zone")
+  // "Must-haves or deal breakers" from the onboarding form.
+  mustHaves             String?      @map("must_haves")
+  // The Workforce service department this VA comes from (public.departments
+  // id), worked out from the service and changeable by the CS. Its active
+  // Service Managers act on the request (lib/request-departments.ts).
+  departmentId          String?      @map("department_id")
   createdAt             DateTime     @default(now()) @map("created_at")
   updatedAt             DateTime     @updatedAt @map("updated_at")
 
+  invoiceItems    InvoiceItem[]
+  candidates      ServiceRequestCandidate[]
+  scheduleChanges ScheduleChange[]
+  rateAgreements  RateAgreement[]
+
   @@unique([ticketId, lineNo])
   @@map("ticket_requests")
+  @@schema("vaa_sys")
+}
+
+// Every change to a VA request's schedule (Nov 6, 2026; lib/request-schedule.ts),
+// kept for good so a connected VA's schedule can be followed. A change while
+// the service request is still open affects the initial bill: it needs
+// Executive Support's check (needsReview until reviewedAt), and the VA can't
+// be marked started until then.
+model ScheduleChange {
+  id              String        @id @default(cuid())
+  ticketId        String        @map("ticket_id")
+  ticket          Ticket        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  requestId       String        @map("request_id")
+  request         TicketRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  changedAt       DateTime      @default(now()) @map("changed_at")
+  changedByEmail  String        @map("changed_by_email")
+  // SCHEDULE, or SERVICE (Nov 6, 2026): the request's service and department
+  // changed. A service change on an open New ticket needs the same check.
+  kind            String        @default("SCHEDULE")
+  // The schedule fields before and after (lib/request-schedule.ts ScheduleSnapshot),
+  // or for SERVICE the service and department (ServiceSnapshot).
+  before          Json
+  after           Json
+  // The ticket's phase when it changed.
+  phase           String
+  needsReview     Boolean       @default(false) @map("needs_review")
+  reviewedAt      DateTime?     @map("reviewed_at")
+  reviewedByEmail String?       @map("reviewed_by_email")
+  reviewNote      String?       @map("review_note")
+
+  @@index([ticketId])
+  @@index([requestId])
+  @@index([needsReview, reviewedAt])
+  @@map("schedule_changes")
+  @@schema("vaa_sys")
+}
+
+// Where a Rate Agreement is (Nov 6, 2026). HR walks it through these in
+// order; at VA_ACKNOWLEDGED the VA moves on to the Kick-off Call.
+enum RateAgreementStatus {
+  WAITING
+  PREPARED
+  SCHEDULE_CONFIRMED
+  PAYROLL_ACKNOWLEDGED
+  SENT_TO_VA
+  VA_ACKNOWLEDGED
+  CANCELLED
+
+  @@schema("vaa_sys")
+}
+
+enum RateAgreementBond {
+  NONE
+  TRAINING
+  PERFORMANCE
+  BOTH
+
+  @@schema("vaa_sys")
+}
+
+// One VA's Rate Agreement on a service request (lib/rate-agreements.ts),
+// made when the Service Department Manager moves the VA to Rate Agreement.
+// An HR Manager assigns it to an HR Specialist, who fills in the terms
+// (bonds, night differential, incremental wage increase: the contract's to
+// start with) and records each step. It's cancelled with its ticket or VA.
+// The rate itself isn't stored here: it's the service's confidential VA
+// Base Rate (lib/rates.ts), shown only to rate viewers.
+model RateAgreement {
+  id                       String                  @id @default(cuid())
+  ticketId                 String                  @map("ticket_id")
+  ticket                   Ticket                  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  requestId                String                  @map("request_id")
+  request                  TicketRequest           @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  candidateId              String                  @unique @map("candidate_id")
+  candidate                ServiceRequestCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  status                   RateAgreementStatus     @default(WAITING)
+  statusChangedAt          DateTime                @default(now()) @map("status_changed_at")
+  assignedToEmail          String?                 @map("assigned_to_email")
+  assignedByEmail          String?                 @map("assigned_by_email")
+  assignedAt               DateTime?               @map("assigned_at")
+  // Null until HR sets them; the page starts from the account's contract.
+  bond                     RateAgreementBond?
+  nightDifferential        Boolean?                @map("night_differential")
+  incrementalWage          Boolean?                @map("incremental_wage")
+  notes                    String?
+  preparedAt               DateTime?               @map("prepared_at")
+  preparedByEmail          String?                 @map("prepared_by_email")
+  scheduleConfirmedAt      DateTime?               @map("schedule_confirmed_at")
+  scheduleConfirmedByEmail String?                 @map("schedule_confirmed_by_email")
+  payrollAckAt             DateTime?               @map("payroll_ack_at")
+  payrollAckByEmail        String?                 @map("payroll_ack_by_email")
+  // The day the Rate Agreement was sent to the VA, as HR enters it.
+  sentOn                   DateTime?               @map("sent_on") @db.Date
+  sentByEmail              String?                 @map("sent_by_email")
+  vaAckAt                  DateTime?               @map("va_ack_at")
+  vaAckByEmail             String?                 @map("va_ack_by_email")
+  cancelledAt              DateTime?               @map("cancelled_at")
+  cancelledReason          String?                 @map("cancelled_reason")
+  createdAt                DateTime                @default(now()) @map("created_at")
+  updatedAt                DateTime                @updatedAt @map("updated_at")
+
+  @@index([ticketId])
+  @@index([status])
+  @@index([assignedToEmail])
+  @@map("rate_agreements")
+  @@schema("vaa_sys")
+}
+
+// ── Accounting ───────────────────────────────────────────────────
+
+// The Accounting System (app/(acct)/): every bill and payment. Only the
+// initial bill exists so far; the monthly bills (legacy BillingCycles) are a
+// later kind. How a bill is worked out is lib/billing-fields.ts, from the
+// "Initial Billing Process — Summary & Guide" doc.
+enum InvoiceKind {
+  INITIAL
+
+  @@schema("vaa_sys")
+}
+
+// DRAFT: being prepared, can change. SENT onwards the lines are frozen;
+// PARTIALLY_PAID and PAID follow the payments recorded against it. VOID: sent
+// by mistake or replaced, kept for the record.
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  VOID
+
+  @@schema("vaa_sys")
+}
+
+// The currency on the client's record. Amounts are entered in it; nothing is
+// converted.
+enum BillingCurrency {
+  USD
+  GBP
+  NIS
+
+  @@schema("vaa_sys")
+}
+
+enum InvoiceLineKind {
+  OTF
+  OTF_DISCOUNT
+  DEPOSIT
+  DEPOSIT_DISCOUNT
+  SERVICE_FEE
+  ND_FEE
+  FREE_HOURS
+
+  @@schema("vaa_sys")
+}
+
+// Why part of a standard amount wasn't billed (Foregone Revenue).
+enum ForegoneType {
+  WAIVED
+  DISCOUNTED
+  FREE
+
+  @@schema("vaa_sys")
+}
+
+// A bill to a customer, shown as INV-0001. The fee settings it was worked out
+// with are copied onto it, so changing the defaults later never changes a bill
+// already made. subtotal/vat/paypal/total are the sums of its lines, saved
+// with them.
+model Invoice {
+  id              String          @id @default(cuid())
+  invoiceNumber   Int             @unique @default(autoincrement()) @map("invoice_number")
+  kind            InvoiceKind     @default(INITIAL)
+  customerId      String          @map("customer_id")
+  customer        Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  accountId       String?         @map("account_id")
+  account         Account?        @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  status          InvoiceStatus   @default(DRAFT)
+  currency        BillingCurrency @default(USD)
+  // 18% VAT for Israeli clients, and the PayPal fee for clients paying by
+  // PayPal. Both start from the account's details and can be changed.
+  applyVat        Boolean         @default(false) @map("apply_vat")
+  applyPaypalFee  Boolean         @default(false) @map("apply_paypal_fee")
+  otfAmount       Decimal         @map("otf_amount") @db.Decimal(10, 2)
+  depositAmount   Decimal         @map("deposit_amount") @db.Decimal(10, 2)
+  ndPercent       Decimal         @map("nd_percent") @db.Decimal(5, 2)
+  vatPercent      Decimal         @map("vat_percent") @db.Decimal(5, 2)
+  paypalPercent   Decimal         @map("paypal_percent") @db.Decimal(5, 2)
+  subtotal        Decimal         @default(0) @db.Decimal(12, 2)
+  vatAmount       Decimal         @default(0) @map("vat_amount") @db.Decimal(12, 2)
+  paypalFeeAmount Decimal         @default(0) @map("paypal_fee_amount") @db.Decimal(12, 2)
+  total           Decimal         @default(0) @db.Decimal(12, 2)
+  amountPaid      Decimal         @default(0) @map("amount_paid") @db.Decimal(12, 2)
+  notes           String?
+  sentAt          DateTime?       @map("sent_at")
+  sentByEmail     String?         @map("sent_by_email")
+  voidedAt        DateTime?       @map("voided_at")
+  voidedByEmail   String?         @map("voided_by_email")
+  voidReason      String?         @map("void_reason")
+  createdByEmail  String          @map("created_by_email")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedByEmail  String?         @map("updated_by_email")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  items       InvoiceItem[]
+  departments InvoiceDepartmentFee[]
+  lines       InvoiceLine[]
+  payments    Payment[]
+
+  @@index([customerId])
+  @@index([status])
+  @@map("invoices")
+  @@schema("vaa_sys")
+}
+
+// One VA request on a bill: what the Lead Manager confirmed for it. hours and
+// ndHours are per VA for the first period (prorated from the target start
+// date, or the project hours), prefilled from the request and editable, e.g.
+// to leave out a holiday.
+model InvoiceItem {
+  id                     String        @id @default(cuid())
+  invoiceId              String        @map("invoice_id")
+  invoice                Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  ticketRequestId        String?       @map("ticket_request_id")
+  ticketRequest          TicketRequest? @relation(fields: [ticketRequestId], references: [id], onDelete: SetNull)
+  lineNo                 Int           @map("line_no")
+  service                String
+  department             String
+  scheduleType           ScheduleType  @map("schedule_type")
+  numberOfVas            Int           @map("number_of_vas")
+  periodStart            DateTime      @map("period_start") @db.Date
+  periodEnd              DateTime?     @map("period_end") @db.Date
+  hourlyRate             Decimal       @map("hourly_rate") @db.Decimal(10, 2)
+  hours                  Decimal       @db.Decimal(8, 2)
+  ndHours                Decimal       @default(0) @map("nd_hours") @db.Decimal(8, 2)
+  // How hours was first worked out, e.g. "3 h × 11 workdays (Nov 16–30)".
+  hoursBasis             String        @map("hours_basis")
+  freeHours              Decimal       @default(0) @map("free_hours") @db.Decimal(6, 2)
+  freeHoursRef           String?       @map("free_hours_ref")
+  depositDiscountPercent Decimal       @default(0) @map("deposit_discount_percent") @db.Decimal(5, 2)
+  depositApprovalRef     String?       @map("deposit_approval_ref")
+
+  @@unique([invoiceId, lineNo])
+  @@map("invoice_items")
+  @@schema("vaa_sys")
+}
+
+// The One-Time Fee for one department on a bill. exempt: Creatives with only
+// project-based VAs pays no OTF.
+model InvoiceDepartmentFee {
+  id              String  @id @default(cuid())
+  invoiceId       String  @map("invoice_id")
+  invoice         Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  department      String
+  exempt          Boolean @default(false)
+  discountPercent Decimal @default(0) @map("discount_percent") @db.Decimal(5, 2)
+  approvalRef     String? @map("approval_ref")
+
+  @@unique([invoiceId, department])
+  @@map("invoice_department_fees")
+  @@schema("vaa_sys")
+}
+
+// The bill's lines as the customer sees them, rewritten from its items and
+// department fees on every save. A reduction (discount, free hours) also
+// records what it gave up: those rows are the Foregone Revenue log.
+model InvoiceLine {
+  id             String          @id @default(cuid())
+  invoiceId      String          @map("invoice_id")
+  invoice        Invoice         @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  lineNo         Int             @map("line_no")
+  kind           InvoiceLineKind
+  description    String
+  calculation    String
+  amount         Decimal         @db.Decimal(12, 2)
+  department     String?
+  foregoneAmount Decimal         @default(0) @map("foregone_amount") @db.Decimal(12, 2)
+  foregoneType   ForegoneType?   @map("foregone_type")
+  approvalRef    String?         @map("approval_ref")
+
+  @@unique([invoiceId, lineNo])
+  @@index([foregoneType])
+  @@map("invoice_lines")
+  @@schema("vaa_sys")
+}
+
+// A payment Accounting recorded against a bill, in the bill's currency.
+model Payment {
+  id              String   @id @default(cuid())
+  invoiceId       String   @map("invoice_id")
+  invoice         Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  customerId      String   @map("customer_id")
+  customer        Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  amount          Decimal  @db.Decimal(12, 2)
+  paidOn          DateTime @map("paid_on") @db.Date
+  method          String
+  reference       String?
+  notes           String?
+  recordedByEmail String   @map("recorded_by_email")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([invoiceId])
+  @@index([customerId])
+  @@index([paidOn])
+  @@map("payments")
+  @@schema("vaa_sys")
+}
+
+// The default hourly rate per service, in USD, that a new bill starts from
+// when the service has no Standard Billing Rate (ServiceProfile below).
+model BillingRate {
+  id             String   @id @default(cuid())
+  service        String   @unique
+  hourlyRate     Decimal  @map("hourly_rate") @db.Decimal(10, 2)
+  updatedByEmail String   @map("updated_by_email")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("billing_rates")
+  @@schema("vaa_sys")
+}
+
+// ── Services (Lead Management → Departments & services) ──────────
+
+// What vaa-sys keeps about one of VAA Workforce's services (public.skills,
+// by id; no foreign key, since that table is Workforce's). Its Job
+// Description is Workforce's own column (skills.job_description).
+//
+// The two rates are confidential (Nov 5, 2026): they're stored encrypted
+// (lib/rates.ts, AES-256-GCM with RATES_ENCRYPTION_KEY, which is set only in
+// Vercel), so the database and developers see only ciphertext. A new initial
+// bill starts from the Standard Billing Rate of the service the onboarding
+// form asked for (onboardingService).
+model ServiceProfile {
+  skillId             String    @id @map("skill_id")
+  // The onboarding form's service (SERVICE_OFFERINGS) this service bills for.
+  onboardingService   String?   @unique @map("onboarding_service")
+  contractId          String?   @map("contract_id")
+  contract            Contract? @relation(fields: [contractId], references: [id], onDelete: SetNull)
+  standardRateCipher  String?   @map("standard_rate_cipher")
+  vaBaseRateCipher    String?   @map("va_base_rate_cipher")
+  ratesUpdatedAt      DateTime? @map("rates_updated_at")
+  ratesUpdatedByEmail String?   @map("rates_updated_by_email")
+  updatedByEmail      String?   @map("updated_by_email")
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@map("service_profiles")
+  @@schema("vaa_sys")
+}
+
+// Who may see and set the confidential rates, besides the owner
+// (operations-admin@vaaphilippines.com, in lib/rates.ts). Each row carries an
+// HMAC of the email made with the rates key, so a row added straight in the
+// database (without the key) doesn't count. Granted on User access.
+model RateViewer {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  signature      String
+  grantedByEmail String   @map("granted_by_email")
+  grantedAt      DateTime @default(now()) @map("granted_at")
+
+  @@map("rate_viewers")
   @@schema("vaa_sys")
 }
 

@@ -11,7 +11,11 @@ import { linkExpiry, newLinkToken } from '@/lib/onboarding'
 import { dateOnly, manilaToday, newLeadSchema, type ActionResult, type CustomerMatch, type NewLeadInput } from '@/lib/customer-fields'
 import { confirmContractSchema, PHASE_LABELS, REQUEST_TYPES, REQUEST_TYPE_LABELS, type ConfirmContractInput, type LeadPhase, type LeadRequestType } from '@/lib/lead-phase-fields'
 import { REQUEST_GROUPS, type RequestGroup } from '@/lib/onboarding-fields'
-import { addTestLead, deleteTestLead, sampleOnboarding } from '@/lib/test-leads'
+import { addTestLead, sampleOnboarding } from '@/lib/test-leads'
+import { deleteLead } from '@/lib/lead-delete'
+import { assertCustomerInScope } from '@/lib/scope'
+import { createInitialDraft, discardDraft, saveDraft, sendBill } from '@/lib/billing'
+import type { DraftBillInput } from '@/lib/billing-fields'
 import { submitOnboarding } from '@/app/onboarding/[token]/actions'
 
 const NO_ACCESS = "You don't have permission to use Lead Management."
@@ -92,15 +96,16 @@ export async function createTestLead(): Promise<ActionResult> {
   redirect(`/leads/${id}`)
 }
 
-// Admins: deletes a test lead and everything attached to it. Real leads are
-// refused in lib/test-leads.ts.
-export async function removeTestLead(customerId: string): Promise<ActionResult> {
-  const actor = await getActorFor('testLeads', 'delete')
-  if (!actor) return { ok: false, error: 'Only admins can delete test leads.' }
-  const result = await deleteTestLead(actor, customerId)
+// Admins: deletes a lead and everything attached to it, for good. A real
+// lead needs its name typed back and no payments recorded (lib/lead-delete.ts).
+export async function removeLead(customerId: string, typedName: string): Promise<ActionResult> {
+  const actor = await getActorFor('leads', 'delete')
+  if (!actor) return { ok: false, error: 'Only admins can delete leads.' }
+  const result = await deleteLead(actor, customerId, typedName)
   if (!result.ok) return result
   revalidatePath('/leads')
   revalidatePath('/customers')
+  revalidatePath('/accounting')
   redirect('/leads')
 }
 
@@ -263,6 +268,60 @@ export async function setLeadRequestType(customerId: string, requestType: string
   })
   refreshLead(customerId)
   return { ok: true, data: { phase } }
+}
+
+// ── Initial bill (lib/billing.ts) ─────────────────────────────────
+// The Lead Manager prepares it in Contract & Billing Initiation from the
+// lead's service requests, adjusts it, and marks it sent; Accounting sees it
+// in the Accounting System and records the payments.
+
+function refreshBill(customerId: string) {
+  refreshLead(customerId)
+  revalidatePath('/accounting', 'layout')
+}
+
+// The bill actions take a lead's id, so they check its scope like every
+// action on a customer (CLAUDE.md). The Lead Manager sees every lead today;
+// this keeps it safe if the grant ever goes to a scoped role.
+async function billActor(customerId: string) {
+  const actor = await getActorFor('leads', 'update')
+  return actor && (await assertCustomerInScope(actor, customerId)) ? actor : null
+}
+
+export async function prepareInitialBill(customerId: string): Promise<ActionResult> {
+  const actor = await billActor(customerId)
+  if (!actor) return { ok: false, error: NO_ACCESS }
+  const result = await createInitialDraft(actor, customerId)
+  if (!result.ok) return result
+  refreshBill(customerId)
+  return { ok: true, data: null }
+}
+
+export async function saveInitialBill(customerId: string, invoiceId: string, input: DraftBillInput): Promise<ActionResult<{ total: number }>> {
+  const actor = await billActor(customerId)
+  if (!actor) return { ok: false, error: NO_ACCESS }
+  const result = await saveDraft(actor, customerId, invoiceId, input)
+  if (result.ok) refreshBill(customerId)
+  return result
+}
+
+// Saves the draft as it is on screen, then marks it sent.
+export async function sendInitialBill(customerId: string, invoiceId: string, input: DraftBillInput): Promise<ActionResult> {
+  const actor = await billActor(customerId)
+  if (!actor) return { ok: false, error: NO_ACCESS }
+  const saved = await saveDraft(actor, customerId, invoiceId, input)
+  if (!saved.ok) return saved
+  const result = await sendBill(actor, customerId, invoiceId)
+  refreshBill(customerId)
+  return result
+}
+
+export async function discardInitialBill(customerId: string, invoiceId: string): Promise<ActionResult> {
+  const actor = await billActor(customerId)
+  if (!actor) return { ok: false, error: NO_ACCESS }
+  const result = await discardDraft(actor, customerId, invoiceId)
+  if (result.ok) refreshBill(customerId)
+  return result
 }
 
 // Contract & Payment Confirmation: the customer signed and paid. The first

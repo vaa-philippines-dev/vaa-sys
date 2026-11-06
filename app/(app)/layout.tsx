@@ -4,7 +4,9 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { SignOutButton } from '@/components/layout/SignOutButton'
 import { NavLinks } from '@/components/layout/NavLinks'
 import { requireSignedIn, displayName } from '@/lib/auth'
+import { ViewAsBanner } from '@/components/layout/ViewAsBanner'
 import { canUse, homeFor, ROLE_LABELS } from '@/lib/access-fields'
+import { can } from '@/lib/permissions'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireSignedIn()
@@ -12,6 +14,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const links = [
     canUse(user.role, 'customers') && { href: '/customers', label: 'Customers' },
     canUse(user.role, 'leads') && { href: '/leads', label: 'Leads' },
+    can(user.role, 'billing') && { href: '/accounting', label: 'Accounting' },
     canUse(user.role, 'access') && { href: '/access', label: 'Access' },
   ].filter((l): l is { href: string; label: string } => !!l)
 
@@ -37,6 +40,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
         </div>
       </header>
+      <ViewAsBanner user={user} />
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">{children}</main>
     </div>

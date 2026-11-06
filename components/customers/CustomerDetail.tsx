@@ -1,8 +1,9 @@
 import Link from 'next/link'
 import { AlertTriangle, ArrowLeft, Hourglass, RotateCcw } from 'lucide-react'
-import { StatusChanger } from '@/components/customers/StatusChanger'
 import { AccountsView } from '@/components/customers/AccountsView'
-import { CustomerEditForm, NotesPanel, SpecialistSelect } from '@/components/customers/CustomerPanels'
+import { NotesPanel, SpecialistSelect } from '@/components/customers/CustomerPanels'
+import { DetailsEditor } from '@/components/customers/DetailsEditor'
+import { editableAccount } from '@/components/customers/details-data'
 import { ReviewButtons } from '@/components/cms/ReviewButtons'
 import { ActivityTable } from '@/components/cms/ActivityTable'
 import { OnboardingLinkPanel } from '@/components/leads/OnboardingLinkPanel'
@@ -14,10 +15,9 @@ import { HandoffButton } from '@/components/customers/HandoffButton'
 import { PHASE_LABELS } from '@/lib/lead-phase-fields'
 import { cn } from '@/lib/utils'
 import { canUse, type AccessRole } from '@/lib/access-fields'
-import { STATUS_LABELS, WARNING_LABELS, dayString, isTerminal, manilaDate, manilaDateTime, type CustomerWarning } from '@/lib/customer-fields'
+import { STATUS_LABELS, WARNING_LABELS, dayString, manilaDate, type CustomerWarning } from '@/lib/customer-fields'
 import { onboardingEmail, onboardingUrl } from '@/lib/onboarding'
 import type { getCustomer } from '@/lib/customers'
-import type { SettingOptionLite } from '@/lib/settings-fields'
 import type { ActivityLog } from '@/src/generated/prisma/client'
 
 type Customer = NonNullable<Awaited<ReturnType<typeof getCustomer>>>
@@ -30,11 +30,9 @@ export type CustomerCmsData = {
   canHandoff: boolean
   canAssign: boolean
   canReview: boolean
-  reviewed: boolean
   team: { email: string; name: string }[]
   specialistName: string | null
   reviewByName: string | null
-  terminationReasons: SettingOptionLite[]
   warnings: CustomerWarning[]
   activity: ActivityLog[]
   takeovers: { id: string; specialistName: string; startDate: Date; endDate: Date; state: string }[]
@@ -58,7 +56,6 @@ export function CustomerDetail({
   const liveLink = customer.onboardingLinks.find((l) => !l.revokedAt && !l.submittedAt && l.expiresAt > now) ?? null
   const latestSubmission = customer.submissions[0] ?? null
   const mayManageLinks = canUse(role, 'leads') && customer.status === 'PENDING' && !latestSubmission
-  const mayChangeStatus = canUse(role, 'customerStatus') && !!cms
   const day = (d: Date) => new Date(`${dayString(d)}T00:00:00+08:00`).toLocaleDateString('en-PH', manilaDate)
 
   const linkInfo = liveLink
@@ -166,7 +163,11 @@ export function CustomerDetail({
         </p>
       </section>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      {/* The Status, Details and Status log side panels were taken out
+          (asked for on Nov 5, 2026): the status follows the accounts (each
+          account's page changes it), the ribbon above shows its history, and
+          the customer's own fields are edited under Details. */}
+      <div>
         <div className="min-w-0 space-y-6">
           {mayManageLinks && (
             <section className="space-y-3">
@@ -198,18 +199,46 @@ export function CustomerDetail({
             </section>
           )}
 
-          <section className="space-y-3">
-            <h2 className="font-semibold">{cms ? 'Onboarding details and tickets' : 'Accounts and tickets'}</h2>
-            {customer.accounts.length > 0 ? (
-              <AccountsView accounts={customer.accounts} canSetGroup={canUse(role, 'leads')} />
+          {(() => {
+            const view =
+              customer.accounts.length > 0 ? (
+                <AccountsView accounts={customer.accounts} canSetGroup={canUse(role, 'leads')} />
+              ) : (
+                <p className="rounded-xl border bg-card p-5 text-sm text-muted-foreground">
+                  {customer.status !== 'PENDING'
+                    ? 'This customer has no accounts in vaa-sys.'
+                    : customer.stage === 'NEW'
+                    ? 'No onboarding link has been sent yet. The first account and its ticket are created when the customer submits the onboarding form.'
+                    : 'Waiting for the customer to submit the onboarding form. Their first account and its ticket are created from it.'}
+                </p>
+              )
+            // Customer Management: the onboarding details and tickets, with an
+            // Edit button (Nov 5, 2026). The customer's own fields are edited
+            // here too, since the separate Details card is gone.
+            return cms ? (
+              <DetailsEditor
+                canEdit={cms.canEdit}
+                customer={{
+                  id: customer.id,
+                  initial: {
+                    name: customer.name,
+                    email: customer.email,
+                    notes: customer.notes,
+                    noPaymentYet: customer.noPaymentYet,
+                    paymentDate: customer.paymentDate ? dayString(customer.paymentDate) : null,
+                  },
+                }}
+                accounts={customer.accounts.map(editableAccount)}
+              >
+                {view}
+              </DetailsEditor>
             ) : (
-              <p className="rounded-xl border bg-card p-5 text-sm text-muted-foreground">
-                {customer.stage === 'NEW'
-                  ? 'No onboarding link has been sent yet. The first account and its ticket are created when the customer submits the onboarding form.'
-                  : 'Waiting for the customer to submit the onboarding form. Their first account and its ticket are created from it.'}
-              </p>
-            )}
-          </section>
+              <section className="space-y-3">
+                <h2 className="font-semibold">Accounts and tickets</h2>
+                {view}
+              </section>
+            )
+          })()}
 
           {cms && (
             <section className="space-y-3">
@@ -225,62 +254,6 @@ export function CustomerDetail({
             </section>
           )}
         </div>
-
-        <aside className="space-y-6">
-          {mayChangeStatus && cms && (
-            <section className="space-y-3 rounded-xl border bg-card p-4">
-              <h2 className="font-semibold">Status</h2>
-              {customer.reviewAction ? (
-                <p className="text-sm text-muted-foreground">Status changes are on hold until the pending review is confirmed or cancelled.</p>
-              ) : (
-                <StatusChanger
-                  kind="customer"
-                  id={customer.id}
-                  current={customer.status}
-                  terminationReasons={cms.terminationReasons}
-                  reviewed={cms.reviewed}
-                  reactivatable={customer.accounts.filter((a) => isTerminal(a.status)).map((a) => ({ id: a.id, name: a.name, status: a.status }))}
-                />
-              )}
-            </section>
-          )}
-
-          {cms?.canEdit && (
-            <section className="space-y-3 rounded-xl border bg-card p-4">
-              <h2 className="font-semibold">Details</h2>
-              <CustomerEditForm
-                customerId={customer.id}
-                initial={{
-                  name: customer.name,
-                  email: customer.email,
-                  notes: customer.notes,
-                  noPaymentYet: customer.noPaymentYet,
-                  paymentDate: customer.paymentDate ? dayString(customer.paymentDate) : null,
-                }}
-              />
-            </section>
-          )}
-
-          <section className="space-y-3">
-            <h2 className="font-semibold">Status log</h2>
-            <ol className="space-y-3 border-l pl-4">
-              {customer.statusLogs.map((log) => (
-                <li key={log.id} className="relative text-sm">
-                  <span className={cn('absolute -left-[21px] top-1.5 h-2 w-2 rounded-full', STATUS_META[log.toStatus].dot)} aria-hidden />
-                  <p className="font-medium">
-                    {log.fromStatus ? `${STATUS_LABELS[log.fromStatus]} → ${STATUS_LABELS[log.toStatus]}` : `Created as ${STATUS_LABELS[log.toStatus]}`}
-                  </p>
-                  {log.terminationReason && <p className="text-muted-foreground">{log.terminationReason.label}</p>}
-                  {log.reason && <p className="whitespace-pre-wrap text-muted-foreground">{log.reason}</p>}
-                  {log.effectiveDate && <p className="text-xs text-muted-foreground">Effective {log.effectiveDate.toLocaleDateString('en-PH', manilaDate)}</p>}
-                  <p className="text-xs text-muted-foreground">
-                    {log.changedAt.toLocaleString('en-PH', manilaDateTime)} · {log.changedByEmail}
-                  </p>
-                </li>
-              ))}
-            </ol>
-          </section>
-        </aside>
       </div>
     </div>
   )
